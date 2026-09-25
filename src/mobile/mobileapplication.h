@@ -1,0 +1,31 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#pragma once
+
+#include <QVariantMap>
+
+#include "common/application.h"
+
+
+class MobileApplication : public Application
+{
+    Q_OBJECT
+
+public:
+    MobileApplication(int &argc, char **argv);
+    ~MobileApplication() override;
+
+    void init() override;
+    static void checkRestart() { }
+
+    bool isWaitingForUserInput() const override;
+
+protected:
+    QCoro::Task<bool> closeAllDocuments() override;
+    void setupQml() override;
+    void setupLogging() override;
+
+private:
+    QVariantMap m_actionMap;
+};

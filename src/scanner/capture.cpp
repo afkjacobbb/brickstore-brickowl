@@ -1,0 +1,455 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#include <QCamera>
+#include <QMediaDevices>
+#include <QImageCapture>
+#include <QMediaCaptureSession>
+#include <QDeadlineTimer>
+#include <QTimer>
+#include <QGuiApplication>
+#include <QPointer>
+#include <QElapsedTimer>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0) && QT_CONFIG(permissions)
+#  include <QCoreApplication>
+#  include <QPermissions>
+#  include <QPointer>
+#  if defined(BS_DESKTOP)
+#    include <QMessageBox>
+#  endif
+#endif
+
+#include "bricklink/core.h"
+#include "bricklink/itemtype.h"
+#include "common/eventfilter.h"
+#include "core.h"
+#include "capture.h"
+
+
+using namespace std::chrono_literals;
+
+namespace Scanner {
+
+class CapturePrivate
+{
+public:
+    QMediaCaptureSession *captureSession = nullptr;
+    QImageCapture *imageCapture = nullptr;
+    QByteArray currentCameraId;
+    QCameraDevice currentCameraDevice;
+    std::unique_ptr<QCamera> camera;
+    std::optional<int> currentCaptureId;
+    QDeadlineTimer tryCaptureBefore;
+    uint currentScanId = 0;
+    QElapsedTimer currentScanTime;
+    int averageScanTime = 1500;
+    QByteArray currentBackendId;
+    int progress = 0;
+    Capture::State state = Capture::State::Idle;
+    QPointer<EventFilter> windowTracker;
+    bool appActive = true;
+    bool winVisible = false;
+
+    QString lastError;
+
+    QTimer noMatchMessageTimeout;
+    QTimer errorMessageTimeout;
+    QTimer progressTimer;
+
+    QList<const BrickLink::ItemType *> supportedFilters;
+    const BrickLink::ItemType *currentFilter = nullptr;
+
+    static bool s_hasCameraPermission;
+};
+
+bool CapturePrivate::s_hasCameraPermission = false;
+
+
+Capture::Capture(QObject *parent)
+    : QObject(parent)
+    , d(new CapturePrivate)
+{
+    d->captureSession = new QMediaCaptureSession(this);
+    d->imageCapture = new QImageCapture(d->captureSession);
+    d->captureSession->setImageCapture(d->imageCapture);
+
+    connect(d->captureSession, &QMediaCaptureSession::videoOutputChanged,
+            this, &Capture::videoOutputChanged);
+
+    d->errorMessageTimeout.setInterval(10s);
+    d->errorMessageTimeout.setSingleShot(true);
+    connect(&d->errorMessageTimeout, &QTimer::timeout, this, [this]() {
+        if (state() == State::Error)
+            setState(State::Idle);
+    });
+    d->noMatchMessageTimeout.setInterval(10s);
+    d->noMatchMessageTimeout.setSingleShot(true);
+    connect(&d->noMatchMessageTimeout, &QTimer::timeout, this, [this]() {
+        if (state() == State::NoMatch)
+            setState(State::Idle);
+    });
+
+    d->progressTimer.setInterval(30ms);
+    connect(&d->progressTimer, &QTimer::timeout, this, [this]() {
+        if ((state() == State::Scanning) && d->averageScanTime) {
+            d->progress = std::clamp(int(100 * d->currentScanTime.elapsed() / d->averageScanTime), 0, 100);
+            emit progressChanged(d->progress);
+        }
+    });
+
+    connect(core(), &Core::scanFinished,
+            this, [this](uint scanId, const QVector<Core::Result> &itemsAndScores) {
+        if (scanId == d->currentScanId) {
+            d->currentScanId = 0;
+            d->lastError.clear();
+
+            auto elapsed = int(d->currentScanTime.elapsed());
+            if (!d->averageScanTime)
+                d->averageScanTime = 1;
+            d->averageScanTime = std::max(1, (d->averageScanTime + elapsed) / 2);
+
+            QVector<const BrickLink::Item *> items;
+            items.reserve(itemsAndScores.size());
+            for (const auto &is : itemsAndScores)
+                items << is.item;
+
+            if (items.isEmpty()) {
+                setState(State::NoMatch);
+            } else {
+                setState(State::Idle);
+                emit captureAndScanFinished(items);
+            }
+        }
+    });
+
+    connect(core(), &Core::scanFailed,
+            this, [this](uint scanId, const QString &error) {
+        if (scanId == d->currentScanId) {
+            d->currentScanId = 0;
+            d->lastError = error;
+            setState(State::Error);
+        }
+    });
+
+    connect(d->imageCapture, &QImageCapture::errorOccurred,
+            this, [this](int id, QImageCapture::Error error, const QString &errorString) {
+        Q_UNUSED(error)
+
+        if (!d->currentCaptureId.has_value() || d->currentCaptureId.value() != id) {
+            qCCritical(LogScanner) << "Ignoring errorOccurred(id:" << id << "), current:"
+                                   << d->currentCaptureId.value_or(-1);
+            return;
+        }
+        d->currentCaptureId.reset();
+        d->lastError = errorString;
+        setState(State::Error);
+    });
+
+    connect(d->imageCapture, &QImageCapture::readyForCaptureChanged,
+            this, [this](bool ready) {
+        if (ready && !d->tryCaptureBefore.hasExpired())
+            captureAndScan();
+    });
+
+    connect(d->imageCapture, &QImageCapture::imageCaptured,
+            this, [this](int id, const QImage &img) {
+        if (!d->currentCaptureId.has_value() || d->currentCaptureId.value() != id) {
+            qCCritical(LogScanner) << "Ignoring imageCaptured(id:" << id << "), current:"
+                                   << d->currentCaptureId.value_or(-1);
+            return;
+        }
+        d->currentCaptureId.reset();
+        d->currentScanId = core()->scan(img, d->currentFilter, d->currentBackendId);
+
+        if (!d->currentScanId) {
+            d->lastError = tr("Scanning failed");
+            setState(State::Error);
+        } else {
+            setState(State::Scanning);
+        }
+    });
+
+    setCurrentBackendId(core()->defaultBackendId());
+    setCurrentCameraId(QMediaDevices::defaultVideoInput().id());
+
+    connect(qApp, &QGuiApplication::applicationStateChanged,
+            this, [this](Qt::ApplicationState appState) {
+        if (appState == Qt::ApplicationInactive) {
+            d->appActive = false;
+            setState(State::Inactive);
+            updateCameraActive();
+        } else if (appState == Qt::ApplicationActive) {
+            d->appActive = true;
+            if (d->winVisible && (state() == State::Inactive))
+                setState(State::Idle);
+            updateCameraActive();
+        }
+    });
+}
+
+QObject *Capture::videoOutput() const
+{
+    return d->captureSession->videoOutput();
+}
+
+void Capture::setVideoOutput(QObject *videoOutput)
+{
+    d->captureSession->setVideoOutput(videoOutput);
+}
+
+void Capture::trackWindowVisibility(QObject *window)
+{
+    delete d->windowTracker;
+    setWindowVisible(false);
+    if (!window)
+        return;
+
+    d->windowTracker = new EventFilter(window, { QEvent::Hide, QEvent::Show },
+                                       [this](QObject *, QEvent *e) {
+        setWindowVisible(e->type() == QEvent::Show);
+        return EventFilter::ContinueEventProcessing;
+    });
+}
+
+bool Capture::isWindowVisible() const
+{
+    return d->winVisible;
+}
+
+void Capture::setWindowVisible(bool visible)
+{
+    if (d->winVisible == visible)
+        return;
+
+    d->winVisible = visible;
+
+    if (!visible)
+        setState(State::Inactive);
+    else if (d->appActive && (state() == State::Inactive))
+        setState(State::Idle);
+
+    updateCameraActive();
+    emit windowVisibleChanged(visible);
+}
+
+void Capture::captureAndScan()
+{
+    if ((state() != State::Scanning) && (state() != State::Capturing)) {
+        if (d->imageCapture->isReadyForCapture()) {
+            setState(State::Capturing);
+            d->currentCaptureId = d->imageCapture->capture();
+        } else {
+            // The cam might not be ready yet (e.g. window activation). Wait for it to become ready
+            // and try again.
+            d->tryCaptureBefore = QDeadlineTimer(1000);
+        }
+    }
+}
+
+void Capture::checkSystemPermissions(QObject *context, const std::function<void(bool)> &callback)
+{
+    if (CapturePrivate::s_hasCameraPermission) {
+        if (callback)
+            callback(true);
+        return;
+    }
+
+    const QString requestDenied = tr("BrickStore's request for camera access was denied. You will not be able to use your webcam to identify parts until you grant the required permissions via your system's Settings application.");
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)) && QT_CONFIG(permissions)
+    QCameraPermission cameraPermission;
+    switch (qApp->checkPermission(cameraPermission)) {
+    case Qt::PermissionStatus::Undetermined:
+        qApp->requestPermission(cameraPermission, context, [callback](const QPermission &p) {
+            CapturePrivate::s_hasCameraPermission = (p.status() == Qt::PermissionStatus::Granted);
+            if (callback)
+                callback(CapturePrivate::s_hasCameraPermission);
+        });
+        return;
+    case Qt::PermissionStatus::Denied:
+#  if defined(BS_DESKTOP)
+        QMessageBox::warning(nullptr, QCoreApplication::applicationName(), requestDenied);
+#   endif
+        if (callback)
+            callback(false);
+        return;
+    case Qt::PermissionStatus::Granted:
+        break; // Proceed
+    }
+#else
+    Q_UNUSED(context)
+    Q_UNUSED(requestDenied)
+#endif
+    CapturePrivate::s_hasCameraPermission = true;
+    if (callback)
+        callback(true);
+    return;
+}
+
+Capture::State Capture::state() const
+{
+    return d->state;
+}
+
+void Capture::setState(State newState)
+{
+    qCDebug(LogScanner) << "New state:" << newState << "(was" << d->state << ')';
+
+    switch (newState) {
+    case State::Idle:
+    case State::Inactive:
+        break;
+    case State::Capturing:
+        d->currentScanTime.start();
+        break;
+    case State::Scanning:
+        break;
+    case State::NoMatch:
+        d->noMatchMessageTimeout.start();
+        break;
+    case State::Error:
+        d->errorMessageTimeout.start();
+        break;
+    }
+    if (newState == d->state)
+        return;
+
+    if (newState == State::Scanning) {
+        d->progressTimer.start();
+    } else {
+        d->progressTimer.stop();
+        d->progress = 0;
+        emit progressChanged(d->progress);
+    }
+
+    d->state = newState;
+    emit stateChanged(newState);
+}
+
+QString Capture::lastError() const
+{
+    return d->lastError;
+}
+
+int Capture::progress() const
+{
+    return d->progress;
+}
+
+bool Capture::isCameraActive() const
+{
+    return d->camera ? d->camera->isActive() : false;
+}
+
+void Capture::updateCameraActive()
+{
+    if (!d->appActive || !d->winVisible || d->currentCameraDevice.isNull()) {
+        releaseCamera();
+        return;
+    }
+
+    if (!d->camera) {
+        d->camera = std::make_unique<QCamera>(d->currentCameraDevice);
+        connect(d->camera.get(), &QCamera::activeChanged,
+                this, &Capture::cameraActiveChanged);
+        d->captureSession->setCamera(d->camera.get());
+    }
+    if (!d->camera->isActive())
+        d->camera->start();
+}
+
+void Capture::releaseCamera()
+{
+    if (!d->camera)
+        return;
+
+    const bool wasActive = d->camera->isActive();
+    disconnect(d->camera.get(), &QCamera::activeChanged,
+               this, &Capture::cameraActiveChanged);
+    d->camera->stop();
+    d->captureSession->setCamera(nullptr);
+    d->camera.reset();
+
+    if (wasActive)
+        emit cameraActiveChanged(false);
+}
+
+QByteArray Capture::currentCameraId() const
+{
+    return d->currentCameraId;
+}
+
+void Capture::setCurrentCameraId(const QByteArray &newCameraId)
+{
+    if (d->currentCameraId == newCameraId)
+        return;
+
+    QCameraDevice newCameraDevice;
+    const auto allCameraDevices = QMediaDevices::videoInputs();
+    for (const auto &cameraDevice : allCameraDevices) {
+        if (cameraDevice.id() == newCameraId) {
+            newCameraDevice = cameraDevice;
+            break;
+        }
+    }
+    if (newCameraDevice.isNull() && !newCameraId.isEmpty()) // an empty id means "no camera at all"
+        return;
+
+    d->currentCameraId = newCameraId;
+    d->currentCameraDevice = newCameraDevice;
+    emit currentCameraIdChanged(newCameraId);
+
+    releaseCamera(); // the new device needs a new QCamera
+    updateCameraActive();
+}
+
+QByteArray Capture::currentBackendId() const
+{
+    return d->currentBackendId;
+}
+
+void Capture::setCurrentBackendId(const QByteArray &backendId)
+{
+    if (d->currentBackendId == backendId)
+        return;
+
+    if (const auto *backend = core()->backendFromId(backendId)) {
+        d->currentBackendId = backendId;
+
+        auto oldFilters = d->supportedFilters;
+        d->supportedFilters.clear();
+        for (const char c : backend->itemTypeFilter) {
+            if (const auto *itemType = BrickLink::core()->itemType(c))
+                d->supportedFilters << itemType;
+        }
+        if (d->supportedFilters != oldFilters) {
+            if (d->currentFilter && !d->supportedFilters.contains(d->currentFilter))
+                setCurrentItemTypeFilter(nullptr);
+
+            emit supportedItemTypeFiltersChanged(d->supportedFilters);
+        }
+        emit currentBackendIdChanged(backendId);
+    }
+}
+
+const BrickLink::ItemType *Capture::currentItemTypeFilter() const
+{
+    return d->currentFilter;
+}
+
+void Capture::setCurrentItemTypeFilter(const BrickLink::ItemType *filter)
+{
+    if ((filter != d->currentFilter) && (!filter || d->supportedFilters.contains(filter))) {
+        d->currentFilter = filter;
+        emit currentItemTypeFilterChanged(filter);
+    }
+}
+
+QList<const BrickLink::ItemType *> Capture::supportedItemTypeFilters() const
+{
+    return d->supportedFilters;
+}
+
+} // namespace Scanner
+
+#include "moc_capture.cpp"

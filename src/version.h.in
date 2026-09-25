@@ -1,0 +1,42 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#pragma once
+
+#define BRICKSTORE_MAJOR @VERSION_MAJOR@
+#define BRICKSTORE_MINOR @VERSION_MINOR@
+#define BRICKSTORE_PATCH @VERSION_PATCH@
+
+#define BRICKSTORE_BUILD_NUMBER "@BUILD_NUMBER@"
+#define BRICKSTORE_BUILD_USER   "@BUILD_USER@"
+#define BRICKSTORE_BUILD_HOST   "@BUILD_HOST@"
+
+// 2 step stringification
+#define BS_STR(s)   BS_STR2(s)
+#define BS_STR2(s)  #s
+
+#if defined(_MSC_VER)
+#  if _MSC_VER >= 1930
+#    define BRICKSTORE_COMPILER_VERSION_SUB   "2022 (" BS_STR(_MSC_FULL_VER) ")"
+#  elif _MSC_VER >= 1920
+#    define BRICKSTORE_COMPILER_VERSION_SUB   "2019 (" BS_STR(_MSC_FULL_VER) ")"
+#  elif _MSC_VER >= 1910
+#    define BRICKSTORE_COMPILER_VERSION_SUB   "2017 (" BS_STR(_MSC_FULL_VER) ")"
+#  endif
+#  define BRICKSTORE_COMPILER_VERSION  "Microsoft Visual-C++" BRICKSTORE_COMPILER_VERSION_SUB
+#elif defined(__clang__)
+#  define BRICKSTORE_COMPILER_VERSION  "clang " __clang_version__
+#elif defined(__GNUC__)
+#  define BRICKSTORE_COMPILER_VERSION  "GCC " __VERSION__
+#else
+#  define BRICKSTORE_COMPILER_VERSION  "unknown"
+#endif
+
+#define BRICKSTORE_VERSION    BS_STR(BRICKSTORE_MAJOR) "." BS_STR(BRICKSTORE_MINOR) "." BS_STR(BRICKSTORE_PATCH)
+#define BRICKSTORE_COPYRIGHT  "@COPYRIGHT@"
+#define BRICKSTORE_URL        "@BRICKSTORE_URL@"
+#define BRICKSTORE_GITHUB_URL "@GITHUB_URL@"
+#define BRICKSTORE_NAME       "@NAME@"
+
+#define BRICKSTORE_DATABASE_URL  BRICKSTORE_GITHUB_URL "-database/releases/latest/download"
+#define BRICKSTORE_LDRAW_URL     BRICKSTORE_GITHUB_URL "-ldraw/releases/latest/download"

@@ -1,0 +1,190 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#include <QtCore/QCoreApplication>
+#include <QtWidgets/QVBoxLayout>
+#include <QtGui/QHelpEvent>
+#include <QtQuick3D/QQuick3D>
+#include <QtQuick/QQuickView>
+#include <QtQuick/QQuickItem>
+#include <QtQuickWidgets/QQuickWidget>
+
+#include "common/systeminfo.h"
+#include "rendercontroller.h"
+#include "rendersettings.h"
+#include "renderwidget.h"
+
+namespace LDraw {
+
+bool RenderWidget::isGPUSupported()
+{
+    static std::optional<bool> blacklisted;
+
+    if (!blacklisted.has_value()) {
+        // these GPUs will crash QtQuick3D on Windows
+        static const QVector<QByteArray> gpuBlacklist = {
+            "Microsoft Basic Render Driver",
+            "Intel(R) HD Graphics",
+            "Intel(R) HD Graphics 3000",
+            "Intel(R) Q45/Q43 Express Chipset (Microsoft Corporation - WDDM 1.1)",
+            "NVIDIA GeForce 210",
+            "NVIDIA GeForce 210 ",
+            "NVIDIA nForce 980a/780a SLI",
+            "NVIDIA GeForce GT 525M",
+            "NVIDIA GeForce 8400 GS",
+            "NVIDIA NVS 5100M",
+            "NVIDIA Quadro 1000M",
+            "AMD Radeon HD 8240",
+        };
+        const auto gpu = SystemInfo::inst()->asMap().value(u"hw.gpu"_qs).toString();
+        blacklisted = gpuBlacklist.contains(gpu.toLatin1());
+        if (blacklisted.value())
+            qWarning() << "GPU" << gpu << "is blacklisted!";
+    }
+    return !blacklisted.value();
+}
+
+RenderWidget::RenderWidget(QQmlEngine *engine, QWidget *parent)
+    : QWidget(parent)
+{
+    setFocusPolicy(Qt::NoFocus);
+
+    auto layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    m_widget = engine ? std::make_unique<QQuickWidget>(engine, this)
+                      : std::make_unique<QQuickWidget>(this);
+
+    if (isGPUSupported()) {
+        QSurfaceFormat fmt = QQuick3D::idealSurfaceFormat();
+        m_widget->setFormat(fmt);
+        m_widget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+        m_widget->setSource(QUrl(u"qrc:/LDraw/PartRenderer.qml"_qs));
+    }
+
+    if (auto *ro = m_widget->rootObject())
+        m_controller = ro->property("renderController").value<RenderController *>();
+    else
+        m_controller = new RenderController(this);
+
+    paletteChange();
+
+    m_widget->setMinimumSize(100, 100);
+    m_widget->setFocusPolicy(Qt::NoFocus);
+    m_widget->installEventFilter(this);
+
+    connect(m_controller, &RenderController::canRenderChanged,
+            this, &RenderWidget::canRenderChanged);
+    connect(m_controller, &RenderController::tumblingAnimationActiveChanged,
+            this, &RenderWidget::animationActiveChanged);
+    connect(m_controller, &RenderController::requestToolTip,
+            this, [this](const QPointF &pos) {
+        auto he = new QHelpEvent(QHelpEvent::ToolTip, pos.toPoint(), mapToGlobal(pos.toPoint()));
+        QCoreApplication::postEvent(this, he);
+    });
+
+    layout->addWidget(m_widget.get(), 10);
+    languageChange();
+}
+
+RenderController *RenderWidget::controller()
+{
+    return m_controller;
+}
+
+void RenderWidget::clear()
+{
+    m_controller->setItemAndColor(nullptr, nullptr);
+}
+
+void RenderWidget::setItemAndColor(const BrickLink::Item *item, const BrickLink::Color *color)
+{
+    m_controller->setItemAndColor(item, color);
+}
+
+bool RenderWidget::canRender() const
+{
+    return m_controller->canRender();
+}
+
+bool RenderWidget::isAnimationActive() const
+{
+    return m_controller->isTumblingAnimationActive();
+}
+
+void RenderWidget::setAnimationActive(bool active)
+{
+    m_controller->setTumblingAnimationActive(active);
+}
+
+std::optional<QQuaternion> RenderWidget::modelRotation() const
+{
+    if (auto *root = m_widget->rootObject())
+        return root->property("modelRotation").value<QQuaternion>();
+    return { };
+}
+
+bool RenderWidget::renderLines() const
+{
+    if (auto *root = m_widget->rootObject())
+        return root->property("renderLines").toBool();
+    return RenderSettings::inst()->renderLines();
+}
+
+void RenderWidget::resetCamera()
+{
+    m_controller->resetCamera();
+}
+
+void RenderWidget::startAnimation()
+{
+    m_controller->setTumblingAnimationActive(true);
+}
+
+void RenderWidget::stopAnimation()
+{
+    m_controller->setTumblingAnimationActive(false);
+}
+
+void LDraw::RenderWidget::changeEvent(QEvent *e)
+{
+    if (e->type() == QEvent::PaletteChange)
+        paletteChange();
+    else if (e->type() == QEvent::LanguageChange)
+        languageChange();
+    QWidget::changeEvent(e);
+}
+
+void RenderWidget::paletteChange()
+{
+    m_controller->setClearColor(palette().color(QPalette::Active, backgroundRole()));
+}
+
+void RenderWidget::languageChange()
+{
+    if (m_widget->rootObject())
+        setToolTip(tr("Hold left button: Rotate\nPinch gesture: Zoom\nMouse wheel: Zoom\nDouble click: Reset camera\nRight click: Menu"));
+}
+
+bool RenderWidget::eventFilter(QObject *o, QEvent *e)
+{
+#if QT_CONFIG(gestures)
+    // QQuickWidget::event() doesn't forward NativeGesture to its offscreen window, so
+    // trackpad pinches never reach the QML PinchHandler.
+    if ((o == m_widget.get()) && (e->type() == QEvent::NativeGesture)) {
+        auto *nge = static_cast<QNativeGestureEvent *>(e);
+        const QPointF local = m_widget->mapFromGlobal(nge->globalPosition());
+        QNativeGestureEvent mapped(nge->gestureType(), nge->pointingDevice(), nge->fingerCount(),
+                                   local, local, nge->globalPosition(), nge->value(), nge->delta());
+        mapped.setTimestamp(nge->timestamp());
+        QCoreApplication::sendEvent(m_widget->quickWindow(), &mapped);
+        e->setAccepted(mapped.isAccepted());
+        return mapped.isAccepted();
+    }
+#endif
+    return QWidget::eventFilter(o, e);
+}
+
+} // namespace LDraw
+
+#include "moc_renderwidget.cpp"

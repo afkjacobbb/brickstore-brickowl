@@ -1,0 +1,158 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#pragma once
+
+#include <QStringList>
+#include <QPointer>
+#include <QTimer>
+#include <QMutex>
+#include <QLoggingCategory>
+
+#include <QCoro/QCoroTask>
+
+QT_FORWARD_DECLARE_CLASS(QTranslator)
+QT_FORWARD_DECLARE_CLASS(QQmlApplicationEngine)
+QT_FORWARD_DECLARE_CLASS(QGuiApplication)
+QT_FORWARD_DECLARE_CLASS(QMimeData)
+QT_FORWARD_DECLARE_CLASS(QWindow)
+
+
+class Announcements;
+class UndoGroup;
+class SentryInterface;
+#if defined(BS_MCP_SERVER)
+class McpServer;
+#endif
+
+
+class Application : public QObject
+{
+    Q_OBJECT
+public:
+    static Application *inst() { return s_inst; }
+
+    Application(int &argc, char **argv);
+    ~Application() override;
+
+    virtual void init();
+    void afterInit();
+    virtual int exec();
+
+    QString buildNumber() const;
+    QString applicationUrl() const;
+    QString gitHubUrl() const;
+    QString gitHubPagesUrl() const;
+    QString databaseUrl() const;
+    QString ldrawUrl() const;
+
+    static void openUrl(const QUrl &url);
+
+    using UILogMessage = std::tuple<QtMsgType, QString, QString, int, QString>;
+    using UIMessageHandler = void(*)(const UILogMessage &);
+
+    void setUILoggingHandler(UIMessageHandler callback);
+
+    QCoro::Task<bool> checkBrickLinkLogin();
+    QCoro::Task<bool> updateDatabase();
+
+    Announcements *announcements();
+    QVariantMap about() const;
+
+    UndoGroup *undoGroup();
+
+    QQmlApplicationEngine *qmlEngine();
+
+    QWindow *mainWindow();
+    void setMainWindow(QWindow *newWindow);
+    Q_SIGNAL void mainWindowChanged(QWindow *newWindow);
+
+    void raise();
+
+    virtual QCoro::Task<bool> closeAllDocuments();
+
+    virtual bool isWaitingForUserInput() const = 0;
+
+#if defined(BS_MCP_SERVER)
+    // The port the MCP server is listening on, or 0 if it is not running.
+    quint16 mcpServerPort() const;
+    Q_SIGNAL void mcpServerStateChanged(quint16 port);
+#endif
+
+    enum Theme { LightTheme, DarkTheme };
+    void setIconTheme(Theme theme);
+
+    void mimeClipboardClear();
+    const QMimeData *mimeClipboardGet() const;
+    void mimeClipboardSet(QMimeData *data);
+
+signals:
+    void openDocument(const QString &fileName);
+    void showSettings(const QString &page = { });
+    void show3DSettings();
+    void showDeveloperConsole();
+    void languageChanged();
+
+protected:
+    static void setupTerminateHandler();
+    virtual void setupLogging();
+    virtual void setupQml();
+    void redirectQmlEngineWarnings(const QLoggingCategory &cat);
+
+    bool initBrickLink();
+
+    void openQueuedDocuments();
+    void updateTranslations();
+
+    static void setupSentry();
+    static void shutdownSentry();
+    static void checkSentryConsent();
+    static void addSentryBreadcrumb(QtMsgType msgType, const QMessageLogContext &msgCtx, const QString &msg);
+
+    QCoro::Task<> restoreLastSession();
+
+    QCoro::Task<> setupLDraw();
+
+#if defined(BS_MCP_SERVER)
+    // (Re-)creates the MCP server and registers the tools enabled by the user's
+    // Config::mcpPermissions(). Does nothing if no permission is granted.
+    void setupMcpServer();
+#endif
+
+protected:
+    QStringList m_startupErrors;
+    QStringList m_startupMessages;
+    QString m_translationOverride;
+    QList<QUrl> m_queuedDocuments;
+    bool m_canEmitOpenDocuments = false;
+
+    std::unique_ptr<QTranslator> m_trans_qt;
+    std::unique_ptr<QTranslator> m_trans_brickstore;
+
+    QtMessageHandler m_defaultMessageHandler = nullptr;
+    UIMessageHandler m_uiMessageHandler = nullptr;
+    QTimer m_loggingTimer;
+    QMutex m_loggingMutex;
+    QVector<UILogMessage> m_loggingMessages;
+    QLoggingCategory::CategoryFilter m_defaultLoggingFilter = nullptr;
+
+    QPointer<Announcements> m_announcements;
+
+    UndoGroup *m_undoGroup = nullptr;
+
+    std::unique_ptr<QMimeData> m_clipboardMimeData;
+
+    QQmlApplicationEngine *m_engine = nullptr;
+    QGuiApplication *m_app = nullptr;
+    QPointer<QWindow> m_mainWindow;
+
+#if defined(BS_MCP_SERVER)
+    std::unique_ptr<McpServer> m_mcpServer;
+#endif
+
+    static std::unique_ptr<SentryInterface> s_sentryInterface;
+
+    static Application *s_inst;
+
+    Q_DISABLE_COPY_MOVE(Application)
+};

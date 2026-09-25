@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
+<plist version="0.9">
+  <dict>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <key>NSHighResolutionCapable</key>
+    <string>True</string>
+
+    <key>CFBundleIconFile</key>
+    <string>brickstore.icns</string>
+
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>NSHumanrReadableCopyright</key>
+    <string>Copyright © ${COPYRIGHT}</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+
+    <key>CFBundleSignature</key>
+    <string>ttxt</string>
+
+    <key>CFBundleExecutable</key>
+    <string>${EXECUTABLE}</string>
+
+    <key>CFBundleName</key>
+    <string>BrickStore</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+
+    <key>CFBundleVersion</key>
+    <string>${BUILD_NUMBER}</string>
+
+    <key>NSCameraUsageDescription</key>
+    <string>BrickStore needs access to your camera, if you want to identify parts with it.</string>
+
+    <key>CFBundleDocumentTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleTypeExtensions</key>
+        <array>
+          <string>bsx</string>
+        </array>
+
+        <key>CFBundleTypeIconFile</key>
+        <string>brickstore_doc.icns</string>
+
+        <key>CFBundleTypeMIMETypes</key>
+        <array>
+          <string>application/x-brickstore-xml</string>
+        </array>
+
+        <key>CFBundleTypeName</key>
+        <string>BrickStore XML</string>
+
+        <key>CFBundleTypeRole</key>
+        <string>Editor</string>
+
+        <key>LSIsAppleDefaultForType</key>
+        <true/>
+      </dict>
+    </array>
+  </dict>
+</plist>

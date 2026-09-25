@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    <mime-type type="application/x-brickstore-xml">
+        <comment>BrickStore XML</comment>
+        <icon name="dev.brickstore.BrickStore.doc"/>
+        <magic priority="100">
+          <match value="BrickStoreXML" type="string" offset="0:200"/>
+          <match value="BrickStockXML" type="string" offset="0:200"/>
+        </magic>
+        <glob pattern="*.bsx" />
+  </mime-type>
+</mime-info>

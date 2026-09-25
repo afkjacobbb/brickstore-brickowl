@@ -1,0 +1,79 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+
+#include <QtCore/QString>
+#include <QtCore/QLocale>
+#include <QtCore/QPair>
+#include <QtGui/QColor>
+#include <QtGui/QImage>
+
+#if defined(Q_OS_WINDOWS) && defined(max)
+#  undef max
+#endif
+
+QT_FORWARD_DECLARE_CLASS(QFontMetrics)
+QT_FORWARD_DECLARE_CLASS(QRect)
+QT_FORWARD_DECLARE_CLASS(QWidget)
+
+
+
+namespace Utility {
+
+constexpr double fixFinite(double d)
+{
+    return std::isfinite(d) ? d : 0;
+}
+
+constexpr std::partial_ordering fuzzyCompare(double d1, double d2) // just like qFuzzyCompare, but also usable around 0
+{
+    bool equal = qAbs(d1 - d2) <= 1e-12 * std::max({ 1.0, qAbs(d1), qAbs(d2) });
+    if (equal)
+        return std::partial_ordering::equivalent;
+    auto r = d1 <=> d2;
+    // NaN <=> x returns unordered, which violates strict weak ordering for std::sort.
+    // Treat unordered as equivalent so NaN values don't corrupt the sort.
+    return (r == std::partial_ordering::unordered) ? std::partial_ordering::equivalent : r;
+}
+
+std::strong_ordering naturalCompare(QAnyStringView s1, QAnyStringView s2);
+
+QColor gradientColor(const QColor &c1, const QColor &c2, float f = 0.5);
+QColor textColor(const QColor &backgroundColor);
+QColor contrastColor(const QColor &c, float f);
+QColor shadeColor(int n, float alpha = 0.f);
+QColor premultiplyAlpha(const QColor &c);
+
+QImage stripeImage(int h, const QColor &stripeColor, const QColor &baseColor = Qt::transparent);
+
+QString weightToString(double gramm, QLocale::MeasurementSystem ms, bool optimize = false, bool show_unit = false);
+double stringToWeight(const QString &s, QLocale::MeasurementSystem ms);
+
+double roundTo(double f, int decimals);
+
+QString localForInternationalCurrencySymbol(const QString &international_symbol);
+
+QString urlQueryEscape(const QString &str);
+
+inline QString urlQueryEscape(const char *str)  { return urlQueryEscape(QString::fromLatin1(str)); }
+inline QString urlQueryEscape(const QByteArray &str)   { return urlQueryEscape(QString::fromLatin1(str)); }
+
+namespace Android {
+
+QString fileNameFromUrl(const QUrl &url);
+bool isSideLoaded();
+
+}
+
+namespace Windows {
+
+// running from an MSIX package (Store or side-loaded), not from a plain install
+bool isPackaged();
+
+}
+
+} // namespace Utility

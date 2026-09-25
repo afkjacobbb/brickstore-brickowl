@@ -1,0 +1,1107 @@
+# Copyright (C) 2004-2026 Robert Griebl
+# SPDX-License-Identifier: GPL-3.0-only
+
+name: CMake Build Matrix
+
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+  BRICKSTORE_QT_DESKTOP_VERSION: '6.11.2'
+  BRICKSTORE_QT_MOBILE_VERSION: '6.11.2'
+  BRICKSTORE_QT6_DEB_PACKAGES: >-
+      build-essential cmake ninja-build
+      libglvnd-dev libtbb-dev
+      libsecret-1-dev
+      qt6-tools-dev qt6-tools-dev-tools
+      qt6-l10n-tools qt6-documentation-tools
+      qt6-base-dev qt6-base-private-dev qt6-base-dev-tools
+      qt6-declarative-dev qt6-declarative-private-dev
+      qt6-qpa-plugins qt6-image-formats-plugins
+  BRICKSTORE_GUI_QT6_DEB_PACKAGES: >-
+      libcups2-dev
+      qt6-quick3d-dev qt6-quick3d-dev-tools qt6-shadertools-dev
+      qt6-gtk-platformtheme libqt6svg6-dev qt6-multimedia-dev
+      qml6-module-qt5compat-graphicaleffects qml6-module-qtmultimedia
+      qml6-module-qtqml-workerscript ^qml6-module-(qt)?quick3d$
+  BRICKSTORE_GUI_QT6_INSTALLER_MODULES: >-
+      qtquick3d qtshadertools qtquicktimeline qt5compat qtimageformats qtmultimedia qthttpserver qtwebsockets
+
+defaults:
+  run:
+    shell: bash
+
+on:
+  workflow_dispatch:
+    inputs:
+      brickowl_prototype:
+        description: "Build only the BrickOwl Windows x64 Release installer and portable ZIP"
+        type: boolean
+        default: true
+      publish_docs:
+        description: "Publish the extensions documentation to GitHub Pages"
+        type: boolean
+        default: false
+      publish_docker:
+        description: "Publish the backend Docker image to Docker Hub"
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+      - next
+      - brickowl-prototype
+    tags:
+      - v*
+
+# Superseded branch builds are pointless, but a half-finished release is worse
+# than a slow one - never cancel a tag build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+# Least privilege for the automatic GITHUB_TOKEN; the jobs that need to write to
+# the repository opt back in individually.
+permissions:
+  contents: read
+
+jobs:
+
+  # BUILD for Windows
+  #################################################
+
+  build-windows:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.runs-on }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: >-
+          ${{ fromJSON((inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && '[{"name": "BrickOwl Prototype x64 Release", "artifact": "Windows-x64", "runs-on": "windows-latest", "qt_host": "windows", "qt_arch": "win64_msvc2022_64", "qt_dir": "msvc2022_64", "environment_script": "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat"}]' || '[{"name": "Windows Intel 64bit", "artifact": "Windows-x64", "runs-on": "windows-2022", "qt_host": "windows", "qt_arch": "win64_msvc2022_64", "qt_dir": "msvc2022_64", "environment_script": "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat"}, {"name": "Windows ARM 64bit", "artifact": "Windows-ARM64", "runs-on": "windows-11-arm", "qt_host": "windows_arm64", "qt_arch": "win64_msvc2022_arm64", "qt_dir": "msvc2022_arm64", "environment_script": "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvarsamd64_arm64.bat"}]') }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: windows
+        version: ${{ env.BRICKSTORE_QT_DESKTOP_VERSION }}
+        host: ${{ matrix.config.qt_host }}
+        arch: ${{ matrix.config.qt_arch }}
+        dir: ${{ matrix.config.qt_dir }}
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    - name: Build for Windows
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      run: |
+        choco install ninja
+        call "${{ matrix.config.environment_script }}"
+        rem imagescale generates the .ico files during the build and is not deployed
+        set PATH=%Qt6_DIR%\bin;%PATH%
+        call %Qt6_DIR%\bin\qt-cmake.bat -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSENTRY=ON -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --target installer --verbose
+      shell: cmd
+
+    - name: Locate MSVC 2022 and Inno Setup
+      if: ${{ (inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if (!$vs) { throw 'MSVC 2022 x64 tools are required by the upstream Qt ABI.' }
+        "PROTOTYPE_VCVARS=$vs/VC/Auxiliary/Build/vcvars64.bat" >> $env:GITHUB_ENV
+        if (!(Test-Path "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe")) {
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE) { throw 'Inno Setup installation failed' }
+        }
+        "${env:ProgramFiles(x86)}/Inno Setup 6" >> $env:GITHUB_PATH
+
+    - name: Build and deploy BrickOwl Release
+      if: ${{ (inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      shell: cmd
+      run: |
+        call "%PROTOTYPE_VCVARS%" || exit /b 1
+        set PATH=%Qt6_DIR%\bin;%PATH%
+        call "%Qt6_DIR%\bin\qt-cmake.bat" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBRICKOWL_PROTOTYPE=ON -DSENTRY=OFF -B build -S . || exit /b 1
+        cmake --build build --config Release --parallel 4 --target deploy || exit /b 1
+        powershell -NoProfile -ExecutionPolicy Bypass -File windows/prepare-prototype.ps1 -Payload build/bin || exit /b 1
+        cmake --build build --config Release --target installer || exit /b 1
+
+    - name: Test installed and portable Windows application
+      if: ${{ (inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      shell: pwsh
+      run: ./windows/test-prototype.ps1 -Build build
+
+    - name: Upload BrickOwl Windows downloads
+      if: ${{ (inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: BrickStore-BrickOwl-Windows-x64
+        if-no-files-found: error
+        path: |
+          build/BrickStore-BrickOwl-Setup-x64.exe
+          build/BrickStore-BrickOwl-Windows-x64.zip
+          build/SHA256SUMS.txt
+
+    - name: Upload Windows smoke evidence
+      if: ${{ always() && (inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: BrickStore-BrickOwl-Windows-smoke
+        if-no-files-found: warn
+        path: build/smoke-evidence/
+
+    # The tile images do not depend on the architecture, so only one leg generates
+    # them. Needs the MSVC environment again (every step gets a fresh shell) and
+    # Qt in PATH, because imagescale is built outside the deployed tree.
+    - name: Generate the MSIX assets
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && matrix.config.artifact == 'Windows-x64' }}
+      run: |
+        call "${{ matrix.config.environment_script }}"
+        set PATH=%Qt6_DIR%\bin;%PATH%
+        cmake --build build --target msix-assets --verbose
+      shell: cmd
+
+    - name: Upload Windows Installer
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.config.artifact }}-only
+        path: "build/*.exe"
+
+    - name: Upload the MSIX assets
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && matrix.config.artifact == 'Windows-x64' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-Windows-MSIX-Assets
+        path: "build/msix"
+
+    # The Inno Setup wizard image is generated, not committed, and the universal
+    # installer job has no build directory to generate it in. It does not depend on
+    # the architecture, so one leg ships it.
+    - name: Upload the installer assets
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && matrix.config.artifact == 'Windows-x64' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-Windows-Installer-Assets
+        path: "build/generated/icons/windows-installer.png"
+
+    # the deployed tree is what the universal installer is assembled from
+    - name: Upload the deployed tree
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-${{ matrix.config.artifact }}-Deployed
+        path: "build/bin"
+
+    - name: Upload Windows debug info to sentry.io
+      if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+      uses: ./.github/actions/sentry-upload-dif
+      with:
+        os: windows
+        auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        paths: build/bin %Qt6_DIR%\bin
+
+  # BUILD the universal Windows installer
+  #################################################
+
+  # One installer carrying both architectures, assembled from the deployed trees of
+  # the two build-windows legs. Only this job needs iscc, and it runs on x64 - the
+  # arm64 runner never compiles an installer.
+  #
+  # The per-architecture installers above stay for now: the in-app update check
+  # still refers to them by name.
+
+  build-windows-installer:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Windows Installer"
+    needs: [ build-windows ]
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download the x64 tree
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-x64-Deployed
+        path: payload/x64
+
+    - name: Download the arm64 tree
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-ARM64-Deployed
+        path: payload/arm64
+
+    # the .iss looks for this next to the payload, at the same place relative to
+    # SOURCE_DIR that it sits at in a real build tree
+    - name: Download the installer assets
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-Installer-Assets
+        path: generated/icons
+
+    - name: Create the universal installer
+      run: |
+        set /p VERSION=<VERSION_NUMBER
+        iscc.exe "/DSOURCE_DIR=%CD%\payload" "/O%CD%\build" "/FBrickStore-%VERSION%" windows\brickstore-universal.iss
+      shell: cmd
+
+    - name: Upload the universal installer
+      uses: actions/upload-artifact@v7
+      with:
+        name: Windows
+        path: "build/*.exe"
+
+  # BUILD the MSIX bundle for the Microsoft Store
+  #################################################
+
+  # Both architectures in one .msixbundle, assembled from the same deployed trees
+  # as the universal installer. It is unsigned - the Store signs on submission -
+  # so it is a handover to the publishing step, never a release asset.
+
+  build-windows-msix:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Windows MSIX"
+    needs: [ build-windows ]
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download the x64 tree
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-x64-Deployed
+        path: payload/x64
+
+    - name: Download the arm64 tree
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-ARM64-Deployed
+        path: payload/arm64
+
+    - name: Download the MSIX assets
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-MSIX-Assets
+        path: msix
+
+    # makepri and makeappx are Windows SDK tools; vcvars puts them on PATH. The
+    # package version has four parts and the Store wants the last one to be 0.
+    - name: Stage, pack and bundle
+      run: |
+        call "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
+        set /p VERSION=<VERSION_NUMBER
+        for %%A in (x64 arm64) do (
+          cmake -DPAYLOAD_DIR=%CD%\payload\%%A -DASSETS_DIR=%CD%\msix\Assets ^
+                -DSOURCE_DIR=%CD% -DOUT_DIR=%CD%\msix\%%A ^
+                -DMSIX_ARCH=%%A -DMSIX_VERSION=%VERSION%.0 -DMAKEAPPX=ON ^
+                -P windows\msix\generate-package.cmake || exit /b 1
+        )
+        cmake "-DPACKAGES=%CD%\msix\BrickStore-%VERSION%.0-x64.msix;%CD%\msix\BrickStore-%VERSION%.0-arm64.msix" ^
+              -DOUT_FILE=%CD%\build\BrickStore-%VERSION%.msixbundle -DBUNDLE_VERSION=%VERSION%.0 ^
+              -P windows\msix\generate-bundle.cmake
+      shell: cmd
+
+    - name: Upload the MSIX bundle
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-Windows-MSIX
+        path: "build/*.msixbundle"
+
+  # BUILD for Linux (AppImage)
+  #################################################
+
+  # Ubuntu 22.04 defines the min. glibc version as 2.35.
+  # Qt's own binaries need at most 2.34, so they run in there unchanged.
+  # GitHub retired the ubuntu-22.04 runner images, so we have to work with nested containers.
+
+  build-appimage:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Linux AppImage"
+    runs-on: ubuntu-24.04
+    env:
+      APPIMAGE_BASE_IMAGE: "ubuntu:22.04"
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: linux
+        version: ${{ env.BRICKSTORE_QT_DESKTOP_VERSION }}
+        host: 'linux'
+        arch: 'linux_gcc_64'
+        dir: 'gcc_64'
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    # APPIMAGE_EXTRACT_AND_RUN is needed because linuxdeploy and the tools it calls
+    # are AppImages themselves, and a container has no /dev/fuse to mount them on.
+    - name: Build and package for Linux (AppImage)
+      run: |
+        docker run --rm -i \
+            -v "${{ runner.workspace }}:${{ runner.workspace }}" \
+            -w "$GITHUB_WORKSPACE" \
+            -e Qt6_DIR \
+            -e BUILD_NUMBER \
+            -e APPIMAGE_EXTRACT_AND_RUN=1 \
+            -e DEBIAN_FRONTEND=noninteractive \
+            "$APPIMAGE_BASE_IMAGE" bash -s <<'SCRIPT'
+        set -eu
+
+        apt -y update
+        apt -y install \
+            g++ cmake ninja-build dpkg-dev wget ca-certificates git file \
+            libglvnd-dev libtbb-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-* libpulse-dev libgstreamer*1.0-dev libsecret-1-dev \
+            libva-dev libcups2-dev libfuse2
+
+        ${Qt6_DIR}/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --verbose
+        env DESTDIR=build/BrickStore-Install cmake --install build --config RelWithDebInfo --prefix /usr
+
+        mkdir -p .linuxdeploy
+        wget -P .linuxdeploy -N "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+        chmod +x .linuxdeploy/linuxdeploy-x86_64.AppImage
+        wget -P .linuxdeploy -N "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
+        chmod +x .linuxdeploy/linuxdeploy-plugin-qt-x86_64.AppImage
+        # the libva libs have to be the versioned ones: Qt's ffmpeg stubs dlopen them by soname
+        env VERSION=`cat VERSION_NUMBER` QML_SOURCES_PATHS=src EXTRA_QT_PLUGINS=svg \
+            "QMAKE=${Qt6_DIR}/bin/qmake" "LD_LIBRARY_PATH=${Qt6_DIR}/lib" \
+            .linuxdeploy/linuxdeploy-x86_64.AppImage \
+                --appdir=build/BrickStore-Install \
+                -l /usr/lib/$(dpkg-architecture -qDEB_BUILD_MULTIARCH)/libva.so.2 \
+                -l /usr/lib/$(dpkg-architecture -qDEB_BUILD_MULTIARCH)/libva-drm.so.2 \
+                -l /usr/lib/$(dpkg-architecture -qDEB_BUILD_MULTIARCH)/libva-x11.so.2 \
+                --plugin qt \
+                --output appimage
+        SCRIPT
+
+    - name: Upload Linux AppImage
+      uses: actions/upload-artifact@v7
+      with:
+        name: "Linux-AppImage"
+        path: "*.AppImage"
+
+  # BUILD for Linux (Snap / Flatpak)
+  #################################################
+
+  build-snap-flatpak:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.runs-on }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: "Ubuntu Snap Intel 64bit"
+          artifact: "Linux-Snap-amd64"
+          snap: true
+          runs-on: ubuntu-24.04
+          qt_host: 'linux'
+          qt_arch: 'linux_gcc_64'
+          qt_dir: 'gcc_64'
+
+        - name: "Ubuntu Snap ARM 64bit"
+          artifact: "Linux-Snap-arm64"
+          snap: true
+          runs-on: ubuntu-24.04-arm
+          qt_host: 'linux_arm64'
+          qt_arch: 'linux_gcc_arm64'
+          qt_dir: 'gcc_arm64'
+
+        - name: "Linux Flatpak Intel 64bit"
+          artifact: "Linux-Flatpak-amd64"
+          flatpak: true
+          runs-on: ubuntu-24.04
+          qt_host: 'linux'
+          qt_arch: 'linux_gcc_64'
+          qt_dir: 'gcc_64'
+
+        - name: "Linux Flatpak ARM 64bit"
+          artifact: "Linux-Flatpak-arm64"
+          flatpak: true
+          runs-on: ubuntu-24.04-arm
+          qt_host: 'linux_arm64'
+          qt_arch: 'linux_gcc_arm64'
+          qt_dir: 'gcc_arm64'
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: linux
+        version: ${{ env.BRICKSTORE_QT_DESKTOP_VERSION }}
+        host: ${{ matrix.config.qt_host }}
+        arch: ${{ matrix.config.qt_arch }}
+        dir: ${{ matrix.config.qt_dir }}
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    - name: Build for Linux (Snap / Flatpak)
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt -y update
+        sudo DEBIAN_FRONTEND=noninteractive apt -y install \
+            g++ cmake ninja-build libglvnd-dev libtbb-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-\* libpulse-dev libgstreamer\*1.0-dev libsecret-1-dev libva-dev libcups2-dev
+        ${Qt6_DIR}/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --verbose
+        env DESTDIR=build/BrickStore-Install cmake --install build --config RelWithDebInfo --prefix /usr
+
+    # QuasarApp only releases x86_64 binaries. Building from source needs nothing but
+    # Qt Core and takes well under a minute, so do it on every architecture.
+
+    - name: Build CQtDeployer
+      run: |
+        git clone --recursive --branch v1.6.2441.67ee1ef \
+            https://github.com/QuasarApp/CQtDeployer.git .cqtdeployer/src
+        # the pe-parse submodule builds with -Werror, but newer GCCs deprecate wstring_convert
+        ${Qt6_DIR}/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCQT_DEPLOYER_TESTS=OFF \
+            -DCMAKE_CXX_FLAGS=-Wno-error=deprecated-declarations \
+            -B .cqtdeployer/build -S .cqtdeployer/src
+        cmake --build .cqtdeployer/build --parallel
+
+    - name: Create Linux Snap / Flatpak 1
+      run: |
+        cd build
+        # -libDir is what gets Qt's bundled FFmpeg libs deployed for the QtMultimedia backend
+        ../.cqtdeployer/build/src/CQtDeployer/CQtDeployer \
+            -bin bin/brickstore -qmlDir ../src \
+            -libDir "${Qt6_DIR}/lib" \
+            -qmake "${Qt6_DIR}/bin/qmake" \
+            -targetDir BrickStore-Install/usr -libOut lib -binOut bin \
+            -disableRunScript brickstore -disableShortCut brickstore
+
+    - name: Create Linux Flatpak 2
+      if: matrix.config.flatpak
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt -y install flatpak flatpak-builder appstream
+        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        cd build
+        flatpak-builder --user --verbose --install-deps-from flathub --force-clean --repo fp-repo \
+            fp-build ./flatpak.yaml
+        flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo fp-repo \
+            BrickStore-`cat ../VERSION_NUMBER`-`flatpak --default-arch`.flatpak \
+            dev.brickstore.BrickStore
+
+    - name: Upload Linux Flatpak
+      if: matrix.config.flatpak
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.config.artifact }}
+        path: "build/*.flatpak"
+
+    - name: Create Linux Snap 2
+      if: matrix.config.snap
+      id: create-snap
+      uses: snapcore/action-build@v1
+      with:
+        path: build
+
+    - name: Upload Linux Snap
+      if: matrix.config.snap
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-${{ matrix.config.artifact }}
+        path: ${{ steps.create-snap.outputs.snap }}
+
+  # BUILD for macOS
+  #################################################
+
+  build-macos:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.runs-on }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: "macOS Universal"
+          artifact: "macOS"
+          runs-on: macos-15
+          cmake_extra_config: '-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DSENTRY=ON'
+
+        # Intel only, 10.14, 10.15, 11 and 12
+        - name: "macOS 10 Legacy"
+          artifact: "macOS-10-Legacy"
+          runs-on: macos-15-intel
+          qt_version: '6.4.3'
+          cmake_extra_config: '-DCMAKE_OSX_ARCHITECTURES="x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.14'
+          xcode: '16.2'
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: macos
+        version: ${{ matrix.config.qt_version || env.BRICKSTORE_QT_DESKTOP_VERSION }}
+        host: 'mac'
+        arch: 'clang_64'
+        dir: 'macos'
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    - name: Set up Apple signing
+      uses: ./.github/actions/apple-signing
+      with:
+        certificate-p12-data: ${{ secrets.MACOS_SIGNING_CERTIFICATE_P12_DATA }}
+        certificate-password: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+        api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+        api-key-p8-data: ${{ secrets.APPSTORE_API_KEY_P8_DATA }}
+        xcode-version: ${{ matrix.config.xcode }}
+
+    - name: Build for macOS
+      run: |
+        ${Qt6_DIR}/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -D "MACOS_SIGNING_IDENTITY=${{ secrets.MACOS_SIGNING_IDENTITY }}" \
+            ${{ matrix.config.cmake_extra_config }} -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --target dmg --verbose
+
+    - name: Notarize and staple macOS DMG
+      run: |
+        xcrun notarytool submit --wait build/BrickStore-*.dmg \
+            --issuer "${{ secrets.APPSTORE_API_KEY_ISSUER }}" \
+            --key-id "${{ secrets.APPSTORE_API_KEY_ID }}" \
+            --key "~/.appstoreconnect/private_keys/AuthKey_${{ secrets.APPSTORE_API_KEY_ID }}.p8"
+        xcrun stapler staple -v build/BrickStore-*.dmg
+
+    - name: Upload macOS DMG
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.config.artifact }}
+        path: "build/*.dmg"
+
+    - name: Upload macOS debug info to sentry.io
+      uses: ./.github/actions/sentry-upload-dif
+      with:
+        os: macos
+        auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        paths: build/BrickStore.app.dSYM ${Qt6_DIR}/lib/
+
+  # BUILD for Android
+  #################################################
+
+  build-android:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Android"
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: android
+        version: ${{ env.BRICKSTORE_QT_MOBILE_VERSION }}
+        host: 'linux'
+        host-arch: 'linux_gcc_64'
+        target: 'android'
+        arch: 'android_x86_64'
+        extra-archs: 'android_arm64_v8a android_armv7'
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    - name: Build for Android
+      run: |
+        echo "Using NDK: $ANDROID_SDK_ROOT/ndk/27.3.13750724"
+        echo "QT_HOST_PATH: $(readlink -f $Qt6_DIR/../gcc_64)"
+        # fix build-tools 33 (dx missing)
+        for dir in `find $ANDROID_SDK_ROOT/build-tools/ -type d -mindepth 1`; do
+          if [ -e $dir/d8 ] && [ ! -e $dir/dx ]; then
+            sudo cp -a $dir/lib/d8.jar $dir/lib/dx.jar
+            sudo cp -a $dir/d8 $dir/dx
+          fi
+        done
+
+        sudo DEBIAN_FRONTEND=noninteractive apt -y update
+        sudo DEBIAN_FRONTEND=noninteractive apt -y install cmake ninja-build libglvnd-dev
+
+        echo "${{ secrets.ANDROID_KEYSTORE_STORE_DATA }}" | base64 --decode >android_release.keystore
+        export QT_ANDROID_KEYSTORE_PATH="`pwd`/android_release.keystore"
+        export QT_ANDROID_KEYSTORE_ALIAS="${{ secrets.ANDROID_KEYSTORE_ALIAS }}"
+        export QT_ANDROID_KEYSTORE_STORE_PASS="${{ secrets.ANDROID_KEYSTORE_STORE_PASS }}"
+        export QT_ANDROID_KEYSTORE_KEY_PASS="${{ secrets.ANDROID_KEYSTORE_KEY_PASS }}"
+
+        ${Qt6_DIR}/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -D "QT_HOST_PATH=$(readlink -f $Qt6_DIR/../gcc_64)" \
+            -D "QT_ANDROID_TARGET_SDK_VERSION=36" \
+            -D "QT_ANDROID_BUILD_ALL_ABIS=TRUE" \
+            -D "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/27.3.13750724" \
+            -D "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" \
+            -D "QT_ANDROID_SIGN_AAB=TRUE" \
+            -D "QT_ANDROID_MULTI_ABI_FORWARD_VARS=SENTRY" \
+            -DSENTRY=ON -B build -S .
+        echo "Creating AAB"
+        cmake --build build --config RelWithDebInfo --parallel --target final-aab --verbose
+        echo "Creating ARM64 APK"
+        cmake --build build/android_abi_builds/arm64-v8a --config RelWithDebInfo --parallel --target final-apk --verbose
+        echo "Creating ARM APK"
+        cmake --build build/android_abi_builds/armeabi-v7a --config RelWithDebInfo --parallel --target final-apk --verbose
+
+    - name: Upload Android AAB
+      uses: actions/upload-artifact@v7
+      with:
+        name: "Staging-Android-PlayStore"
+        path: "build/*.aab"
+
+    - name: Upload Android ARM64 APK
+      uses: actions/upload-artifact@v7
+      with:
+        name: "Android-ARM64"
+        path: "build/android_abi_builds/arm64-v8a/*.apk"
+
+    - name: Upload Android ARM APK
+      uses: actions/upload-artifact@v7
+      with:
+        name: "Android-ARM"
+        path: "build/android_abi_builds/armeabi-v7a/*.apk"
+
+    # The .so only carries the symbol table: enable_separate_debug_info() moves the
+    # DWARF into the BrickStore.debug companion, so both are needed.
+    # Qt's own Android libraries are shipped stripped and without companion debug files.
+    - name: Upload Android debug info to sentry.io
+      uses: ./.github/actions/sentry-upload-dif
+      with:
+        os: linux
+        auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        paths: >-
+          build/libBrickStore_*.so build/BrickStore.debug
+          build/android_abi_builds/*/libBrickStore_*.so
+          build/android_abi_builds/*/BrickStore.debug
+
+  # BUILD for iOS
+  #################################################
+
+  # see here for a description of this setup
+  # https://betterprogramming.pub/deploy-an-ios-app-to-testflight-or-the-app-store-using-github-actions-c4d7082b1430
+
+  build-ios:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "iOS"
+    runs-on: macos-26
+    env:
+      # Pin the XCode version when a new one on the runner breaks the build, until a
+      # fixed one ships. Empty means whatever the runner defaults to.
+      XCODE_VERSION: ''
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: ./.github/actions/install-qt
+      with:
+        os: ios
+        version: ${{ env.BRICKSTORE_QT_MOBILE_VERSION }}
+        host: 'mac'
+        host-arch: 'clang_64'
+        target: 'ios'
+        arch: 'ios'
+        modules: ${{ env.BRICKSTORE_GUI_QT6_INSTALLER_MODULES }}
+
+    - name: Set up Apple signing
+      uses: ./.github/actions/apple-signing
+      with:
+        certificate-p12-data: ${{ secrets.IOS_SIGNING_CERTIFICATE_P12_DATA }}
+        certificate-password: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}
+        api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+        api-key-p8-data: ${{ secrets.APPSTORE_API_KEY_P8_DATA }}
+        provisioning-profile-data: ${{ secrets.IOS_PROVISIONING_PROFILE_DATA }}
+        provisioning-profile-specifier: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
+        xcode-version: ${{ env.XCODE_VERSION }}
+
+    - name: Build for iOS
+      run: |
+        ${Qt6_DIR}/bin/qt-cmake -G Xcode -DCMAKE_BUILD_TYPE=Release \
+            -D "QT_HOST_PATH=$(readlink -f $Qt6_DIR/../macos)" \
+            -D "CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=${{ secrets.IOS_DEV_TEAM }}" \
+            -D "CMAKE_XCODE_ATTRIBUTE_PROVISIONING_PROFILE_SPECIFIER=${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}" \
+            -D "CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=${{ secrets.IOS_CODE_SIGN_IDENTITY }}" \
+            -D "CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual" \
+            -B build -S .
+        cmake --build build --config Release --parallel --target ipa --verbose
+
+    - name: Upload iOS IPA
+      uses: actions/upload-artifact@v7
+      with:
+        name: "Staging-iOS-AppStore"
+        path: "build/*.ipa"
+
+  # BUILD for Linux (distro packages)
+  #################################################
+
+  # User facing packages only. Each one builds in its own distro's container, so it
+  # links against that distro's Qt and CPack resolves the dependencies against a
+  # clean environment instead of the runner's.
+
+  build-debian:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: ${{ matrix.config.name }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.config.debian_container }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: "Ubuntu 24.04"
+          artifact: "Ubuntu-24.04"
+          debian_container: "buildpack-deps:24.04"
+        - name: "Ubuntu 26.04"
+          artifact: "Ubuntu-26.04"
+          debian_container: "buildpack-deps:26.04"
+
+    steps:
+
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Install Qt from Linux Distro
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt -y update
+        apt -y install debhelper lsb-release fakeroot build-essential \
+            $BRICKSTORE_QT6_DEB_PACKAGES $BRICKSTORE_GUI_QT6_DEB_PACKAGES \
+
+    - name: Build for Linux (Debian package)
+      run: |
+        /usr/lib/qt6/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --target deb-package --verbose
+
+    - name: Upload Linux DEB
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.config.artifact }}
+        path: "build/*.deb"
+
+  # BUILD the backend
+  #################################################
+
+  # Kept apart from the user facing packages: this deb exists mainly to feed the
+  # Docker image and has to match its debian:trixie-slim base. It is also where the
+  # extensions documentation is generated from.
+
+  build-backend:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Debian 13 Backend"
+    runs-on: ubuntu-24.04
+    container: "buildpack-deps:trixie"
+
+    steps:
+
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Install Qt from Linux Distro
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt -y update
+        apt -y install debhelper lsb-release fakeroot build-essential \
+            $BRICKSTORE_QT6_DEB_PACKAGES
+
+    - name: Build the backend (Debian package)
+      run: |
+        /usr/lib/qt6/bin/qt-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBACKEND_ONLY=ON \
+            -B build -S .
+        cmake --build build --config RelWithDebInfo --parallel --target deb-package --verbose
+
+    - name: Upload the backend DEB
+      uses: actions/upload-artifact@v7
+      with:
+        name: Debian-13-Backend
+        path: "build/*.deb"
+
+    - name: Generate Documentation
+      run: cmake --build build --target extensions-doc --verbose
+
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-Documentation
+        path: "build/doc/html/extensions"
+
+  # BUILD the Backend Docker image
+  #################################################
+
+  # Cannot live in build-backend: that job runs inside buildpack-deps, which has no
+  # docker CLI. The image tag is derived from BUILD_NUMBER, which is identical in
+  # every job of a run, so it survives the save/load handover unchanged.
+
+  build-backend-docker:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') }}
+    name: "Docker Backend"
+    needs: [ build-backend ]
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download the backend DEB
+      uses: actions/download-artifact@v7
+      with:
+        name: Debian-13-Backend
+        path: docker
+
+    - name: Build the Docker image
+      run: |
+        mv docker/*.deb docker/brickstore-backend.deb
+        # a namespace-less local tag: the registry namespace is added by the publish
+        # job, which is the only one that knows DOCKER_USER
+        docker build docker --tag "brickstore-backend:$BUILD_NUMBER"
+        docker save "brickstore-backend:$BUILD_NUMBER" | gzip >backend-docker-image.tar.gz
+
+    - name: Upload the Docker image
+      uses: actions/upload-artifact@v7
+      with:
+        name: Staging-Backend-Docker-Image
+        path: backend-docker-image.tar.gz
+
+  # PUBLISH
+  #################################################
+
+  # These only consume artifacts, so a failed upload can be re-run on its own
+  # instead of rebuilding. The debug info uploads cannot move here: they scan
+  # Qt's installed libraries, which only exist on the build runner.
+
+  # One revision per architecture: the store keeps them apart, and the promote step
+  # in the release job moves all of a channel's revisions at once.
+
+  publish-snap:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish Snap"
+    needs: [ build-snap-flatpak ]
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: [ "Linux-Snap-amd64", "Linux-Snap-arm64" ]
+
+    steps:
+    - name: Download the snap
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-${{ matrix.artifact }}
+        path: snap
+
+    - name: Resolve the snap file name
+      id: find-snap
+      run: echo "path=$(ls snap/*.snap | head -1)" >> $GITHUB_OUTPUT
+
+    - name: Publish to Snapcraft (edge channel)
+      uses: snapcore/action-publish@v1
+      env:
+        SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.UBUNTU_SNAP_LOGIN }}
+      with:
+        snap: ${{ steps.find-snap.outputs.path }}
+        release: edge
+
+  publish-playstore:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish PlayStore"
+    needs: [ build-android ]
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download the AAB
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Android-PlayStore
+        path: build
+
+    # the build job used to put this into the environment for the release name
+    - name: Read the version number
+      run: echo VERSION_NUMBER="`cat VERSION_NUMBER`" >> $GITHUB_ENV
+
+    - name: Upload Android AAB to the PlayStore
+      uses: r0adkll/upload-google-play@v1
+      with:
+        serviceAccountJsonPlainText: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
+        packageName: de.brickforge.brickstore
+        releaseFiles: build/*.aab
+        status: completed
+        tracks: beta
+        releaseName: "${{ env.VERSION_NUMBER }} (build: ${{ env.BUILD_NUMBER }})"
+
+  # altool is macOS only, so this needs a macOS runner even though it only uploads
+  publish-appstore:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish AppStore"
+    needs: [ build-ios ]
+    runs-on: macos-26
+    steps:
+    - name: Download the IPA
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-iOS-AppStore
+        path: build
+
+    - name: Set up the AppStore API key
+      uses: ./.github/actions/apple-signing
+      with:
+        api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+        api-key-p8-data: ${{ secrets.APPSTORE_API_KEY_P8_DATA }}
+
+    - name: Upload iOS IPA to the AppStore
+      run: |
+        xcrun altool --upload-app -f build/BrickStore-*.ipa -t ios \
+            --apiIssuer "${{ secrets.APPSTORE_API_KEY_ISSUER }}" \
+            --apiKey "${{ secrets.APPSTORE_API_KEY_ID }}"
+
+  # The msstore CLI needs the four Entra ID / Partner Center values as secrets.
+  # The product ID is the public Store ID from Product management > Product
+  # identity, the same one in the apps.microsoft.com listing URL.
+  #
+  # --noCommit leaves the submission in draft instead of sending it to
+  # certification: the Store has no pre-release channel to aim at the way the
+  # snap and the PlayStore builds do, and withdrawing a submission that is
+  # already in certification is tedious. Drop the flag to publish outright.
+  publish-msstore:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish MSStore"
+    needs: [ build-windows-msix ]
+    runs-on: windows-2022
+    env:
+      MSSTORE_PRODUCT_ID: "9N2FQLWPSGWC"
+    steps:
+    - name: Download the MSIX bundle
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Windows-MSIX
+        path: build
+
+    - name: Set up the Microsoft Store CLI
+      uses: microsoft/microsoft-store-apppublisher@v1.1
+
+    - name: Configure the Microsoft Store CLI
+      run: |
+        msstore reconfigure --tenantId ${{ secrets.MSSTORE_TENANT_ID }} `
+                            --sellerId ${{ secrets.MSSTORE_SELLER_ID }} `
+                            --clientId ${{ secrets.MSSTORE_CLIENT_ID }} `
+                            --clientSecret ${{ secrets.MSSTORE_CLIENT_SECRET }}
+      shell: pwsh
+
+    - name: Upload the bundle to the Store
+      run: |
+        $bundle = (Get-ChildItem build/*.msixbundle)[0].FullName
+        msstore publish $bundle -id $env:MSSTORE_PRODUCT_ID -v
+      shell: pwsh
+
+  publish-backend-docker:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (inputs.publish_docker || startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish Docker"
+    needs: [ build-backend-docker ]
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Download the Docker image
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Backend-Docker-Image
+
+    - name: Push the Docker image
+      env:
+        DOCKER_USER: ${{ secrets.DOCKER_USER }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      run: |
+        docker load -i backend-docker-image.tar.gz
+        docker tag "brickstore-backend:$BUILD_NUMBER" "$DOCKER_USER/brickstore-backend:$BUILD_NUMBER"
+        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
+        docker push "$DOCKER_USER/brickstore-backend:$BUILD_NUMBER"
+
+  publish-docs:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (inputs.publish_docs || startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Publish Documentation"
+    needs: [ build-backend ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # pushes to the gh-pages branch
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download the documentation
+      uses: actions/download-artifact@v7
+      with:
+        name: Staging-Documentation
+        path: extensions-doc
+
+    - name: Publish Documentation
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./extensions-doc
+        destination_dir: extensions
+        enable_jekyll: true
+
+  # RELEASE
+  #################################################
+
+  release:
+    if: ${{ !(inputs.brickowl_prototype || github.ref == 'refs/heads/brickowl-prototype') && (startsWith(github.ref, 'refs/tags/v')) }}
+    name: "Release"
+    needs: [ build-windows, build-windows-installer, build-windows-msix, build-appimage, build-snap-flatpak,
+             build-macos, build-android, build-ios, build-debian, build-backend,
+             publish-snap, publish-playstore, publish-appstore, publish-msstore,
+             publish-backend-docker, publish-docs ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # creates the GitHub release
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download Artifacts to Release
+      uses: actions/download-artifact@v7
+      with:
+        path: 'artifacts'
+
+    - name: Rename Artifacts
+      run: |
+        # Everything in artifacts/ becomes a release asset, unless its name starts with "Staging-"
+        rm -rf artifacts/Staging-*
+        find artifacts -mindepth 2 -type f -print0 | while read -d $'\0' a; do
+          d="$(dirname $a)"
+          mv "$a" "${d}-$(basename $a)"
+          rmdir "$d" || true
+        done
+        echo "Artifacts after flattening:"
+        find artifacts
+        echo VERSION_NUMBER="`cat VERSION_NUMBER`" >> $GITHUB_ENV
+
+    - name: Release
+      uses: docker://antonyurchenko/git-release:v6
+      # uses: rgriebl/git-release@testing
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        args: artifacts/*
+
+    - name: Create release on sentry.io
+      uses: getsentry/action-release@v1
+      env:
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        SENTRY_ORG: brickstore
+        SENTRY_PROJECT: brickstore
+      with:
+        version: "brickstore@${{ env.BUILD_NUMBER }}"
+
+    - name: Promote Snapcraft build to stable
+      env:
+        SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.UBUNTU_SNAP_LOGIN }}
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt -y install snapcraft
+        snapcraft promote --yes --from-channel edge --to-channel stable brickstore

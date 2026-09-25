@@ -1,0 +1,112 @@
+# Copyright (C) 2004-2026 Robert Griebl
+# SPDX-License-Identifier: GPL-3.0-only
+
+qt_add_library(bricklink_module STATIC
+    category.h
+    category.cpp
+    changelogentry.h
+    color.h
+    color.cpp
+    core.h
+    core.cpp
+    database.h
+    database.cpp
+    dimensions.h
+    dimensions.cpp
+    global.h
+    item.h
+    item.cpp
+    itemtype.h
+    itemtype.cpp
+    lot.h
+    lot.cpp
+    partcolorcode.h
+    picture.h
+    picture_p.h
+    picture.cpp
+    priceguide.h
+    priceguide_p.h
+    priceguide.cpp
+    relationship.h
+    relationship.cpp
+)
+
+if (NOT BS_BACKEND)
+    qt_add_qml_module(bricklink_module
+        URI BrickLink
+        VERSION 1.1
+        OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/imports/BrickLink
+        IMPORT_PATH ${CMAKE_BINARY_DIR}/imports
+        NO_PLUGIN
+        RESOURCE_PREFIX /
+        DEPENDENCIES
+            QtQml
+    )
+
+    target_link_libraries(bricklink_module PRIVATE
+        Qt6::Qml
+    )
+endif()
+
+target_link_libraries(bricklink_module PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Concurrent
+    Qt6::Sql
+    QCoro6::Network
+    QCoro6::Core
+)
+
+if (BS_BACKEND)
+    target_sources(bricklink_module PRIVATE
+        textimport.h
+        textimport_p.h
+        textimport.cpp
+    )
+endif()
+
+if (BS_DESKTOP OR BS_MOBILE)
+    target_sources(bricklink_module PRIVATE
+        cart.h
+        cart.cpp
+        io.h
+        io.cpp
+        model.h
+        model_p.h
+        model.cpp
+        order.h
+        order.cpp
+        qmlapi.h
+        qmlapi.cpp
+        staticpointermodel.h
+        staticpointermodel.cpp
+        store.h
+        store.cpp
+        wantedlist.h
+        wantedlist.cpp
+    )
+endif()
+
+if (BS_DESKTOP)
+    target_sources(bricklink_module PRIVATE
+        delegate.h
+        delegate.cpp
+    )
+    target_link_libraries(bricklink_module PRIVATE
+        Qt6::Widgets
+    )
+endif()
+
+if (BS_MCP_SERVER)
+    target_sources(bricklink_module PRIVATE
+        mcpapi.h
+        mcpapi.cpp
+    )
+    target_link_libraries(bricklink_module PRIVATE mcp_server_module)
+endif()
+
+if (MODELTEST)
+    target_link_libraries(bricklink_module PRIVATE Qt6::Test)
+endif()
+
+target_link_libraries(${PROJECT_NAME} PRIVATE bricklink_module)

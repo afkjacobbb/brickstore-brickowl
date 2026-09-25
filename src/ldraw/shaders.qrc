@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/ldraw">
+        <file>PartRenderer.qml</file>
+        <file>lightbox.hdr</file>
+    </qresource>
+</RCC>

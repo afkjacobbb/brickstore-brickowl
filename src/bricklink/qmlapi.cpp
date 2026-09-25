@@ -1,0 +1,1445 @@
+// Copyright (C) 2004-2026 Robert Griebl
+// SPDX-License-Identifier: GPL-3.0-only
+
+#include <QQmlInfo>
+#include <QQmlEngine>
+
+#include "model.h"
+#include "picture.h"
+#include "priceguide.h"
+#include "qmlapi.h"
+
+
+namespace BrickLink {
+
+/*! \qmltype Color
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This value type represents a BrickLink color.
+
+    Each color in the BrickLink catalog is available as a Color object.
+
+    You cannot create Color objects yourself, but you can retrieve a Color object given the
+    id via the various BrickLink::color() overloads and BrickLink::colorFromLDrawId().
+
+    See \l https://www.bricklink.com/catalogColors.asp
+*/
+/*! \qmlproperty bool Color::isNull
+    \readonly
+    Returns whether this Color is \c null. Since this type is a value wrapper around a C++
+    object, we cannot use the normal JavaScript \c null notation.
+*/
+/*! \qmlproperty int Color::id
+    \readonly
+    The BrickLink id of this color.
+*/
+/*! \qmlproperty string Color::name
+    \readonly
+    The BrickLink name of this color.
+*/
+/*! \qmlproperty color Color::color
+    \readonly
+    Returns the RGB value of this BrickLink color as a basic QML color type.
+*/
+/*! \qmlproperty int Color::ldrawId
+    \readonly
+    The LDraw id of this color, or \c -1 if there is no match or if a LDraw installation isn't
+    available.
+*/
+/*! \qmlproperty bool Color::solid
+    \readonly
+    Returns \c true if this color is a solid color, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::transparent
+    \readonly
+    Returns \c true if this color is transparent, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::glitter
+    \readonly
+    Returns \c true if this color is glittery, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::speckle
+    \readonly
+    Returns \c true if this color is speckled, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::metallic
+    \readonly
+    Returns \c true if this color is metallic, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::chrome
+    \readonly
+    Returns \c true if this color is chrome-like, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::milky
+    \readonly
+    Returns \c true if this color is milky, or \c false otherwise.
+*/
+/*! \qmlproperty bool Color::modulex
+    \readonly
+    Returns \c true if this color is a Modulex color, or \c false otherwise.
+*/
+/*! \qmlproperty real Color::popularity
+    \readonly
+    Returns the popularity of this color, normalized to the range \c{[0 .. 1]}.
+    The raw popularity value is derived from summing up the counts of the \e Parts, \e{In Sets},
+    \e Wanted and \e{For Sale} columns in the \l{https://www.bricklink.com/catalogColors.asp}
+    {BrickLink Color Guide table}.
+*/
+/*! \qmlmethod image Color::sampleImage(int width, int height)
+    \readonly
+    Returns an image of this color, sized \a width x \a height.
+*/
+
+QmlColor::QmlColor(const Color *col)
+    : QmlWrapperBase(col)
+{ }
+
+QImage QmlColor::image() const
+{
+    return wrapped->sampleImage(20, 20);
+}
+
+QImage QmlColor::sampleImage(int width, int height) const
+{
+    return wrapped->sampleImage(width, height);
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmltype ItemType
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This value type represents a BrickLink item type.
+
+    Each item type in the BrickLink catalog is available as an ItemType object.
+
+    You cannot create ItemType objects yourself, but you can retrieve an ItemType object given the
+    id via BrickLink::itemType().
+    Each Item also has a read-only property Item::itemType.
+
+    The currently available item types are
+    \table
+    \header
+      \li Id
+      \li Name
+    \row
+      \li \c B
+      \li Book
+    \row
+      \li \c C
+      \li Catalog
+    \row
+      \li \c G
+      \li Gear
+    \row
+      \li \c I
+      \li Instruction
+    \row
+      \li \c M
+      \li Minifigure
+    \row
+      \li \c O
+      \li Original Box
+    \row
+      \li \c P
+      \li Part
+    \row
+      \li \c S
+      \li Set
+    \endtable
+*/
+/*! \qmlproperty bool ItemType::isNull
+    \readonly
+    Returns whether this ItemType is \c null. Since this type is a value wrapper around a C++
+    object, we cannot use the normal JavaScript \c null notation.
+*/
+/*! \qmlproperty int ItemType::id
+    \readonly
+    The BrickLink id of this item type.
+*/
+/*! \qmlproperty string ItemType::name
+    \readonly
+    The BrickLink name of this item type.
+*/
+/*! \qmlproperty list<Category> ItemType::categories
+    \readonly
+    A list of \l Category objects describing all the categories that are referencing at least one
+    item of the given item type.
+*/
+/*! \qmlproperty bool ItemType::hasInventories
+    \readonly
+    Returns \c true if items under this type can have inventories, or \c false otherwise.
+*/
+/*! \qmlproperty bool ItemType::hasColors
+    \readonly
+    Returns \c true if items under this type can have colors, or \c false otherwise.
+*/
+/*! \qmlproperty bool ItemType::hasWeight
+    \readonly
+    Returns \c true if items under this type can have weights, or \c false otherwise.
+*/
+/*! \qmlproperty bool ItemType::hasSubConditions
+    \readonly
+    Returns \c true if items under this type can have sub-conditions, or \c false otherwise.
+*/
+/*! \qmlproperty size ItemType::pictureSize
+    \readonly
+    The default size and aspect ratio for item pictures of this type.
+*/
+
+QmlItemType::QmlItemType(const BrickLink::ItemType *itt)
+    : QmlWrapperBase(itt)
+{ }
+
+QString QmlItemType::id() const
+{
+    return QString { QChar::fromLatin1(wrapped->id()) };
+}
+
+QVariantList QmlItemType::categories() const
+{
+    const auto cats = wrapped->categories();
+    QVariantList result;
+    result.reserve(cats.size());
+    for (auto cat : cats)
+        result.append(QVariant::fromValue(QmlCategory { cat }));
+    return result;
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmltype Category
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This value type represents a BrickLink item category.
+
+    Each category in the BrickLink catalog is available as a Category object.
+
+    You cannot create Category objects yourself, but you can retrieve a Category object given the
+    id via BrickLink::category().
+    Each Item also has a read-only property Item::category.
+
+    See \l https://www.bricklink.com/catalogCategory.asp
+*/
+/*! \qmlproperty bool Category::isNull
+    \readonly
+    Returns whether this Category is \c null. Since this type is a value wrapper around a C++
+    object, we cannot use the normal JavaScript \c null notation.
+*/
+/*! \qmlproperty int Category::id
+    \readonly
+    The BrickLink id of this category.
+*/
+/*! \qmlproperty string Category::name
+    \readonly
+    The BrickLink name of this category.
+*/
+
+QmlCategory::QmlCategory(const Category *cat)
+    : QmlWrapperBase(cat)
+{ }
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmltype Item
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This value type represents a BrickLink item.
+
+    Each item in the BrickLink catalog is available as an Item object.
+
+    You cannot create Item objects yourself, but you can retrieve an Item object given the
+    id via BrickLink::item().
+
+    See \l https://www.bricklink.com/catalog.asp
+*/
+/*! \qmlproperty bool Item::isNull
+    \readonly
+    Returns whether this Item is \c null. Since this type is a value wrapper around a C++
+    object, we cannot use the normal JavaScript \c null notation.
+*/
+/*! \qmlproperty int Item::id
+    \readonly
+    The BrickLink id of this item.
+*/
+/*! \qmlproperty string Item::name
+    \readonly
+    The BrickLink name of this item.
+*/
+/*! \qmlproperty ItemType Item::itemType
+    \readonly
+    The BrickLink item type of this item.
+*/
+/*! \qmlproperty Category Item::category
+    \readonly
+    The BrickLink category of this item.
+*/
+/*! \qmlproperty bool Item::hasInventory
+    \readonly
+    Returns \c true if a valid inventory exists for this item, or \c false otherwise.
+*/
+/*! \qmlproperty Color Item::defaultColor
+    \readonly
+    Returns the default color used by BrickLink to display a large picture for this item.
+*/
+/*! \qmlproperty real Item::weight
+    \readonly
+    Returns the weight of this item in gram.
+*/
+/*! \qmlproperty date Item::yearReleased
+    \readonly
+    Returns the year this item was first released.
+*/
+/*! \qmlproperty list<Color> Item::knownColors
+    \readonly
+    Returns a list of \l Color objects, containing all the colors the item is known to exist in.
+    \note An item might still exist in more colors than returned here: BrickStore is deriving this
+          data by looking at all the known inventories and PCCs (part-color-codes).
+*/
+/*! \qmlmethod bool Item::hasKnownColor(Color color)
+    Returns \c true if this item is known to exist in the given \a color, or \c false otherwise.
+    \sa knownColors
+*/
+/*! \qmlmethod list<int> Item::pccsForColor(Color color)
+    \since 1.1
+    Returns the LEGO element ids - also known as part-color-codes (PCCs) - that are known for this
+    item in the given \a color. The list may be empty, or hold more than one id when the same part
+    and color combination has been produced under several element ids over time.
+*/
+/*! \qmlproperty list<string> Item::alternateIds
+    Returns a list of all alternate BrickLink ids registered for this item.
+*/
+
+QmlItem::QmlItem(const Item *item)
+    : QmlWrapperBase(item)
+{ }
+
+QString QmlItem::id() const
+{
+    return QString::fromLatin1(wrapped->id());
+}
+
+bool QmlItem::hasKnownColor(QmlColor color) const
+{
+    return wrapped->hasKnownColor(color.wrappedObject());
+}
+
+QList<uint> QmlItem::pccsForColor(QmlColor color) const
+{
+    const Color *col = color.wrappedObject();
+    QList<uint> result;
+    for (const auto &pcc : wrapped->pccs()) {
+        if (pcc.color() == col)
+            result.append(pcc.pcc());
+    }
+    return result;
+}
+
+QVariantList QmlItem::knownColors() const
+{
+    const auto known = wrapped->knownColors();
+    QVariantList result;
+    result.reserve(known.size());
+    for (const auto c : known)
+        result.append(QVariant::fromValue(QmlColor { c }));
+    return result;
+}
+
+QStringList QmlItem::alternateIds() const
+{
+    auto str = QString::fromLatin1(wrapped->alternateIds());
+    return str.isEmpty() ? QStringList { } : str.split(u' ');
+}
+
+QVariantList QmlItem::consistsOf() const
+{
+    const auto consists = wrapped->consistsOf();
+    QVariantList result;
+    result.reserve(qsizetype(consists.size()));
+    for (const auto &co : consists) {
+        auto *lot = new Lot { co.item(), co.color() };
+        lot->setQuantity(co.quantity());
+        lot->setAlternate(co.isAlternate());
+        lot->setAlternateId(co.alternateId());
+        lot->setCounterPart(co.isCounterPart());
+        if (co.isExtra())
+            lot->setStatus(Status::Extra);
+        result << QVariant::fromValue(QmlLot::create(std::move(lot)));
+    }
+    return result;
+}
+
+PartOutTraits QmlItem::partOutTraits() const
+{
+    return wrapped->partOutTraits();
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmltype Lot
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This value type represent a lot in a document.
+
+    A Lot corresponds to a row in a BrickStore document.
+*/
+/*! \qmlproperty bool Lot::isNull
+    \readonly
+    Returns whether this Lot is \c null. Since this type is a value wrapper around a C++ object, we
+    cannot use the normal JavaScript \c null notation.
+*/
+/*! \qmlproperty Item Lot::item
+    The \l Item represented by this lot. Can be a BrickLink::noItem, if there's no item set.
+*/
+/*! \qmlproperty Color Lot::color
+    The \l Color selected for this lot. Can be BrickLink::noColor, if there's no color set.
+*/
+/*! \qmlproperty Category Lot::category
+    \readonly
+    The \l Category of the lot's item or BrickLink::noCategory, if the lot's item is not valid.
+*/
+/*! \qmlproperty ItemType Lot::itemType
+    \readonly
+    The ItemType of the lot's item or BrickLink::noItemType, if the lot's item is not valid.
+*/
+/*! \qmlproperty string Lot::itemId
+    \readonly
+    The id of the lot's item. The same as \c{item.id}, but you don't have to check for isNull on
+    \c item.
+*/
+/*! \qmlproperty string Lot::id
+    \readonly
+    Obsolete. Please use itemId instead.
+*/
+/*! \qmlproperty string Lot::itemName
+    \readonly
+    The name of the lot's item. The same as \c{item.name}, but you don't have to
+    check for isNull on \c item.
+*/
+/*! \qmlproperty string Lot::name
+    \readonly
+    Obsolete. Please use itemName instead.
+*/
+/*! \qmlproperty string Lot::colorName
+    \readonly
+    The color name of the lot's item. The same as \c{color.name}, but you don't have to check for
+    isNull on \c color.
+*/
+/*! \qmlproperty string Lot::categoryName
+    \readonly
+    The category name of the lot's item. The same as \c{item.category.name}, but you don't have to
+    check for isNull on \c item.
+*/
+/*! \qmlproperty string Lot::itemTypeName
+    \readonly
+    The item-type name of the lot's item. The same as \c{item.itemType.name}, but you don't have to
+    check for isNull on \c item.
+*/
+/*! \qmlproperty int Lot::itemYearReleased
+    \readonly
+    The year the lot's item was first released.
+*/
+/*! \qmlproperty int Lot::itemYearLastProduced
+    \readonly
+    The year the lot's item was last produced.
+*/
+
+/*! \qmlproperty Status Lot::status
+    Represents the status of this lot. The Status enumeration has these values:
+    \value BrickLink.Status.Include   The green check mark in the UI.
+    \value BrickLink.Status.Exclude   The red stop sign in the UI.
+    \value BrickLink.Status.Extra     The blue plus sign in the UI.
+*/
+/*! \qmlproperty Condition Lot::condition
+    Describes the condition of this lot. The Condition enumeration has these values:
+    \value BrickLink.Condition.New    The items in this lot are new.
+    \value BrickLink.Condition.Used   The items in this lot are used.
+*/
+/*! \qmlproperty SubCondition Lot::subCondition
+    Describes the sub-condition of this lot, if it represents a set. The SubCondition enumeration
+    has these values:
+    \value BrickLink.SubCondition.None         No sub-condition is set.
+    \value BrickLink.SubCondition.Complete     The set is complete.
+    \value BrickLink.SubCondition.Incomplete   The set is not complete.
+    \value BrickLink.SubCondition.Sealed       The set is still sealed.
+*/
+
+/*! \qmlproperty string Lot::comments
+    The comment or description for this lot. This is the public text that a buyer can see.
+*/
+/*! \qmlproperty string Lot::remarks
+    The remark is the private text that only the seller can see.
+*/
+
+/*! \qmlproperty int Lot::quantity
+    The quantity of the item.
+*/
+/*! \qmlproperty int Lot::bulkQuantity
+    The bulk quantity. This lot can only be sold in multiple of this.
+*/
+/*! \qmlproperty int Lot::tier1Quantity
+    The tier-1 quantity: if a buyer buys this quantity or more, the price will be tier1Price
+    instead of price.
+*/
+/*! \qmlproperty int Lot::tier2Quantity
+    The tier-2 quantity: if a buyer buys this quantity or more, the price will be tier2Price
+    instead of tier1Price.
+    \note This value needs to be larger than tier1Quantity.
+*/
+/*! \qmlproperty int Lot::tier3Quantity
+    The tier-3 quantity: if a buyer buys this quantity or more, the price will be tier3Price
+    instead of tier2Price.
+    \note This value needs to be larger than tier2Quantity.
+*/
+
+/*! \qmlproperty real Lot::price
+    The unit price of the item.
+*/
+/*! \qmlproperty real Lot::tier1Price
+    The tier-3 price: this will be the price, if a buyer buys tier1Quantity or more parts.
+    \note This value needs to be smaller than price.
+*/
+/*! \qmlproperty real Lot::tier2Price
+    The tier-3 price: this will be the price, if a buyer buys tier2Quantity or more parts.
+    \note This value needs to be smaller than tier2Price.
+*/
+/*! \qmlproperty real Lot::tier3Price
+    The tier-3 price: this will be the price, if a buyer buys tier3Quantity or more parts.
+    \note This value needs to be smaller than tier2Price.
+*/
+
+/*! \qmlproperty int Lot::sale
+    The optional sale on this lots in percent. \c{[0 .. 100]}
+*/
+/*! \qmlproperty real Lot::total
+    \readonly
+    A convenience value, returns \l price times \l quantity.
+*/
+/*! \qmlproperty real Lot::cost
+    The unit cost of the item.
+*/
+
+/*! \qmlproperty uint Lot::lotId
+    The BrickLink lot-id, which uniquely identifies a lot for sale on BrickLink.
+*/
+/*! \qmlproperty bool Lot::retain
+    A boolean flag indicating whether the lot should be retained in the store's stockroom if the
+    last item has been sold.
+*/
+/*! \qmlproperty Stockroom Lot::stockroom
+    Describes if and in which stockroom this lot is located. The Stockroom enumeration has these
+    values:
+    \value BrickLink.Stockroom.None  Not in a stockroom.
+    \value BrickLink.Stockroom.A     In stockroom \c A.
+    \value BrickLink.Stockroom.B     In stockroom \c B.
+    \value BrickLink.Stockroom.C     In stockroom \c C.
+*/
+
+/*! \qmlproperty real Lot::totalWeight
+    The weight of the complete lot, i.e. \l quantity times the \l weight.
+*/
+/*! \qmlproperty real Lot::weight
+    The weight of a single item in the lot.
+*/
+/*! \qmlproperty string Lot::reserved
+    The name of the buyer this item is reserved for or an empty string.
+*/
+/*! \qmlproperty bool Lot::alternate
+    A boolean flag denoting this lot as an \e alternate in a set inventory.
+    \note This value does not get saved.
+*/
+/*! \qmlproperty uint Lot::alternateId
+    If this lot is an \e alternate in a set inventory, this property holds the \e{alternate id}.
+    \note This value does not get saved.
+*/
+/*! \qmlproperty bool Lot::counterPart
+    A boolean flag denoting this lot as a \e{counter part} in a set inventory.
+    \note This value does not get saved.
+*/
+/*! \qmlproperty date Lot::dateAdded
+    The date this lot was added to a document (or your store).
+*/
+/*! \qmlproperty date Lot::dateLastSold
+    The date this lot was sold in your store.
+*/
+/*! \qmlproperty bool Lot::isMarked
+    \readonly
+    A boolean flag denoting whether this lot is marked in the document, i.e. it has a non-empty
+    \l markerText or \l markerColor.
+*/
+/*! \qmlproperty string Lot::markerText
+    The text of the marker, if this lot is marked.
+*/
+/*! \qmlproperty color Lot::markerColor
+    The color of the marker, if this lot is marked.
+*/
+/*! \qmlproperty bool Lot::incomplete
+    \readonly
+    Returns \c false if this lot has a valid item and color, or \c true otherwise.
+*/
+
+/*! \qmlproperty image Lot::image
+    \readonly
+    The item's image in the lot's color; can be \c null.
+    \note The image isn't readily available, but needs to be asynchronously loaded (or even
+          downloaded) at runtime. See the Picture type for more information.
+*/
+
+QmlLot::QmlSetterCallback QmlLot::s_changeLot;
+
+QmlLot::QmlLot(const Lot *lot)
+    : QmlLot(const_cast<Lot *>(lot), nullptr)
+{ }
+
+QmlLot::QmlLot(Lot *lot, ::QmlDocumentLots *documentLots)
+    : QmlWrapperBase(lot)
+    , m_documentLots(documentLots)
+{ }
+
+QmlLot::QmlLot(const QmlLot &copy)
+    : QmlLot(quintptr(copy.m_documentLots) == Owning
+             ? new Lot(*copy.wrappedObject())
+             : copy.wrappedObject(), copy.m_documentLots)
+{ }
+
+QmlLot::QmlLot(QmlLot &&move) noexcept
+    : QmlWrapperBase(move)
+{
+    std::swap(m_documentLots, move.m_documentLots);
+}
+
+QmlLot::~QmlLot()
+{
+    if ((quintptr(m_documentLots) == Owning) && !isNull())
+        delete wrappedObject();
+}
+
+QmlLot QmlLot::create(Lot *&&lot)
+{
+    return { std::move(lot), reinterpret_cast<::QmlDocumentLots *>(Owning) };
+}
+
+QmlLot &QmlLot::operator=(const QmlLot &assign)
+{
+    if (this != &assign) {
+        this->~QmlLot();
+        new (this) QmlLot(assign);
+    }
+    return *this;
+}
+
+QImage QmlLot::image() const
+{
+    static QImage dummy;
+    auto pic = core()->pictureCache()->picture(get()->item(), get()->color(), true);
+    return pic ? pic->image() : dummy;
+}
+
+void QmlLot::setQmlSetterCallback(const QmlSetterCallback &callback)
+{
+    s_changeLot = callback;
+}
+
+
+QmlLot::Setter::Setter(QmlLot *lot)
+    : m_lot((lot && !lot->isNull()) ? lot : nullptr)
+{
+    if (m_lot)
+        m_to = *m_lot->wrapped;
+}
+
+Lot *QmlLot::Setter::to()
+{
+    return &m_to;
+}
+
+QmlLot::Setter::~Setter()
+{
+    if (!m_lot)
+        return;
+
+    if (!m_lot->m_documentLots) {
+        qmlWarning(nullptr) << "Cannot modify a const Lot";
+        return;
+    }
+
+    if (*m_lot->wrapped != m_to) {
+        if (m_lot->m_documentLots && QmlLot::s_changeLot)
+            QmlLot::s_changeLot(m_lot->m_documentLots, m_lot->wrapped, m_to);
+        else
+            *m_lot->wrapped = m_to;
+    }
+}
+
+QmlLot::Setter QmlLot::set()
+{
+    return { this };
+}
+
+Lot *QmlLot::get() const
+{
+    return wrapped;
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmltype BrickLink
+    \inherits QtObject
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief The core singleton managing the data transfer from and to BrickLink.
+
+    This singleton is responsible for handling all communications with the BrickLink servers, as
+    well as giving access to the BrickLink item catalog, which is available through these types:
+    \list
+    \li ItemType
+    \li \l Category
+    \li \l Color
+    \li \l Item
+    \li \l Picture
+    \li PriceGuide
+    \endlist
+*/
+/*! \qmlproperty Database BrickLink::database
+    \readonly
+    The BrickLink catalog \l Database.
+*/
+
+/*! \qmltype Database
+    \inherits QtObject
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This type represents the BrickLink catalog database.
+
+    This type is a singleton that provides access to the BrickLink catalog database.
+    It is accessible via the BrickLink::database property.
+*/
+/*! \qmlproperty bool Database::valid
+    \readonly
+    Returns whether the current database is valid or not.
+*/
+
+/*! \qmlproperty date Database::lastUpdated
+    \readonly
+    This property holds the date and time of the last successful database update.
+*/
+
+QmlBrickLink::QmlBrickLink()
+{
+    setObjectName(u"BrickLink"_qs);
+
+    connect(core()->priceGuideCache(), &BrickLink::PriceGuideCache::currentVatTypeChanged,
+            this, [this](::BrickLink::VatType vatType) {
+        static const auto sig = QMetaMethod::fromSignal(&QmlBrickLink::currentVatTypeChanged);
+        if (isSignalConnected(sig))
+            emit currentVatTypeChanged(vatType);
+    });
+    connect(core()->priceGuideCache(), &BrickLink::PriceGuideCache::priceGuideUpdated,
+            this, [this](const ::BrickLink::PriceGuideRef &pg) {
+        static const auto sig = QMetaMethod::fromSignal(&QmlBrickLink::priceGuideUpdated);
+        if (isSignalConnected(sig))
+            emit priceGuideUpdated(QmlPriceGuide::create(pg));
+    });
+    connect(core()->pictureCache(), &BrickLink::PictureCache::pictureUpdated,
+            this, [this](const ::BrickLink::PictureRef &pic) {
+        static const auto sig = QMetaMethod::fromSignal(&QmlBrickLink::pictureUpdated);
+        if (isSignalConnected(sig))
+            emit pictureUpdated(QmlPicture::create(pic));
+    });
+    connect(core(), &BrickLink::Core::transferProgress,
+            this, &QmlBrickLink::transferProgress);
+}
+
+/*! \qmlproperty Item BrickLink::noItem
+    \readonly
+    A special Item object denoting an invalid item. The object's Item::isNull returns \c true.
+    Used as a return value for functions that can fail.
+
+*/
+QmlItem QmlBrickLink::noItem() const
+{
+    return QmlItem { };
+}
+
+/*! \qmlproperty Color BrickLink::noColor
+    \readonly
+    A special \l Color object denoting an invalid color. The object's Color::isNull returns \c true.
+    Used as a return value for functions that can fail.
+*/
+QmlColor QmlBrickLink::noColor() const
+{
+    return QmlColor { };
+}
+
+/*! \qmlproperty Lot BrickLink::noLot
+    \readonly
+    A special \l Lot object denoting an invalid lot. The object's Lot::isNull returns \c true.
+    Used as a return value for functions that can fail.
+*/
+QmlLot QmlBrickLink::noLot() const
+{
+    return QmlLot { };
+}
+
+QVariantList QmlBrickLink::colorTypes() const
+{
+    QVariantList result;
+    result.reserve(Color::allColorTypes().size());
+    for (auto ct : Color::allColorTypes())
+        result.append(QVariant::fromValue(ct));
+    return result;
+}
+
+/*! \qmlmethod Image BrickLink::noImage(int width, int height)
+    Returns an image (sized \a width x \a height), which can be used in place of a missing item
+    image.
+*/
+QImage QmlBrickLink::noImage(int width, int height) const
+{
+    return core()->noImage({ width, height });
+}
+
+QString QmlBrickLink::colorTypeName(ColorTypeFlag colorType) const
+{
+    return Color::typeName(colorType);
+}
+
+/*! \qmlmethod Color BrickLink::color(var color)
+    Create a JavaScript Color wrapper for a C++ \c{BrickLink::Color *} \a color obtained from a
+    data model.
+*/
+/*! \qmlmethod Color BrickLink::color(string colorName)
+    Returns a Color object corresponding to the given BrickLink \a colorName. If there is no match,
+    the returned object is noColor.
+*/
+/*! \qmlmethod Color BrickLink::color(uint colorId)
+    Returns a Color object corresponding to the given BrickLink \a colorId. If there is no match,
+    the returned object is noColor.
+*/
+QmlColor QmlBrickLink::color(const QVariant &v) const
+{
+    if (v.userType() == qMetaTypeId<const BrickLink::Color *>())
+        return v.value<const BrickLink::Color *>();
+    else if (v.userType() == QMetaType::QString)
+        return core()->colorFromName(v.toString());
+    else
+        return core()->color(v.toUInt());
+}
+
+/*! \qmlmethod Color BrickLink::colorFromLDrawId(int colorId)
+    Returns a Color object corresponding to the given LDraw \a colorId. If there is no match (or
+    if a LDraw installation isn't available), the returned object is noColor.
+*/
+QmlColor QmlBrickLink::colorFromLDrawId(int ldrawId) const
+{
+    return core()->colorFromLDrawId(ldrawId);
+}
+
+/*! \qmlmethod Category BrickLink::category(var category)
+    Create a JavaScript Category wrapper for a C++ \c{BrickLink::Category *} \a category obtained
+    from a data model.
+*/
+/*! \qmlmethod Category BrickLink::category(int categoryId)
+    Returns a Category object corresponding to the given BrickLink \a categoryId. If there is no
+    match, the returned object is noCategory.
+*/
+QmlCategory QmlBrickLink::category(const QVariant &v) const
+{
+    if (v.userType() == qMetaTypeId<const BrickLink::Category *>())
+        return v.value<const BrickLink::Category *>();
+    else
+        return core()->category(v.toUInt());
+}
+
+/*! \qmlmethod ItemType BrickLink::itemType(var itemType)
+    Create a JavaScript ItemType wrapper for a C++ \c{BrickLink::ItemType *} \a itemType obtained
+    from a data model.
+*/
+/*! \qmlmethod ItemType BrickLink::itemType(string itemTypeId)
+    Returns an ItemType object corresponding to the given BrickLink \a itemTypeId. If there is no
+    match, the returned object is noItemType.
+    \note The id is a single letter string and has to be one of \c{PCGIMOPS}.
+*/
+QmlItemType QmlBrickLink::itemType(const QVariant &v) const
+{
+    if (v.userType() == qMetaTypeId<const BrickLink::ItemType *>())
+        return v.value<const BrickLink::ItemType *>();
+    else
+        return core()->itemType(firstCharInString(v.toString()));
+}
+
+/*! \qmlmethod Item BrickLink::itemType(var item)
+    Create a JavaScript Item wrapper for a C++ \c{BrickLink::Item *} \a item obtained from a data
+    model.
+*/
+QmlItem QmlBrickLink::item(const QVariant &v) const
+{
+    if (v.userType() == qMetaTypeId<const BrickLink::Item *>())
+        return v.value<const BrickLink::Item *>();
+    else
+        return noItem();
+}
+
+/*! \qmlmethod Item BrickLink::item(string itemTypeId, string itemId)
+    Returns an \l Item object corresponding to the given BrickLink \a itemTypeId and \a itemId. If
+    there is no match, the returned object is noItem.
+*/
+QmlItem QmlBrickLink::item(const QString &itemTypeId, const QString &itemId) const
+{
+    return core()->item(firstCharInString(itemTypeId), itemId.toLatin1());
+}
+
+/*! \qmltype Picture
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This type represents a picture of a BrickLink item.
+
+    Each picture of an item in the BrickLink catalog is available as a Picture object.
+
+    You cannot create Picture objects yourself, but you can retrieve a Picture object given the
+    item and color id via BrickLink::picture().
+
+    \note Pictures aren't readily available, but need to be asynchronously loaded (or even
+          downloaded) at runtime. You need to connect to the signal BrickLink::pictureUpdated()
+          to know when the data has been loaded.
+*/
+/*! \qmlproperty ItemPointer Picture::item
+    \readonly
+    The BrickLink item reference this picture is requested for as a raw
+    C++ pointer. You can convert it to a QML \l Item object like this:
+    \code
+    let item = BrickLink.item(pic.item)
+    \endcode
+*/
+/*! \qmlproperty ColorPointer Picture::color
+    \readonly
+    The BrickLink color reference this picture is requested for as a raw
+    C++ pointer. You can convert it to a QML \l Color object like this:
+    \code
+    let color = BrickLink.color(pic.color)
+    \endcode
+*/
+/*! \qmlproperty date Picture::lastUpdated
+    \readonly
+    Holds the time stamp of the last successful update of this picture.
+*/
+/*! \qmlproperty UpdateStatus Picture::updateStatus
+    \readonly
+    Returns the current update status. The available values are:
+    \value BrickLink.UpdateStatus.Ok            The last picture load (or download) was successful.
+    \value BrickLink.UpdateStatus.Loading       BrickStore is currently loading the picture from the local cache.
+    \value BrickLink.UpdateStatus.Updating      BrickStore is currently downloading the picture from BrickLink.
+    \value BrickLink.UpdateStatus.UpdateFailed  The last download from BrickLink failed. isValid might still be
+                                                \c true, if there was a valid picture available before the
+                                                failed update!
+*/
+/*! \qmlproperty bool Picture::isValid
+    \readonly
+    Returns whether the image property currently holds a valid image.
+*/
+/*! \qmlproperty image Picture::image
+    \readonly
+    Returns the image if the Picture object isValid, or a null image otherwise.
+*/
+/*! \qmlmethod Picture::update(bool highPriority = false)
+    Tries to re-download the picture from the BrickLink server. If you set \a highPriority to \c
+    true the load/download request will be prepended to the work queue instead of appended.
+*/
+
+/*! \qmltype PriceGuide
+    \inqmlmodule BrickLink
+    \ingroup qml-api
+    \brief This type represents the price guide for a BrickLink item.
+
+    Each price guide of an item in the BrickLink catalog is available as a PriceGuide object.
+
+    You cannot create PriceGuide objects yourself, but you can retrieve a PriceGuide object given the
+    item and color id via BrickLink::priceGuide().
+
+    \note PriceGuides aren't readily available, but need to be asynchronously loaded (or even
+          downloaded) at runtime. You need to connect to the signal BrickLink::priceGuideUpdated()
+          to know when the data has been loaded.
+
+    The following three enumerations are used to retrieve the price guide data from this object:
+
+    \b Time
+    \value BrickLink.Time.PastSix   The sales in the last six months.
+    \value BrickLink.Time.Current   The items currently for sale.
+
+    \b Condition
+    \value BrickLink.Condition.New       Only items in new condition.
+    \value BrickLink.Condition.Used      Only items in used condition.
+
+    \b Price
+    \value BrickLink.Price.Lowest    The lowest price.
+    \value BrickLink.Price.Average   The average price.
+    \value BrickLink.Price.WAverage  The weighted average price.
+    \value BrickLink.Price.Highest   The highest price.
+
+*/
+/*! \qmlproperty ItemPointer PriceGuide::item
+    \readonly
+    The BrickLink item reference this price guide is requested for as a raw
+    C++ pointer. You can convert it to a QML \l Item object like this:
+    \code
+    let item = BrickLink.item(pg.item)
+    \endcode
+*/
+/*! \qmlproperty ColorPointer PriceGuide::color
+    \readonly
+    The BrickLink color reference this price guide is requested for as a raw
+    C++ pointer. You can convert it to a QML \l Color object like this:
+    \code
+    let color = BrickLink.color(pg.color)
+    \endcode
+*/
+/*! \qmlproperty date PriceGuide::lastUpdated
+    \readonly
+    Holds the time stamp of the last successful update of this price guide.
+*/
+/*! \qmlproperty UpdateStatus PriceGuide::updateStatus
+    \readonly
+    Returns the current update status. The available values are:
+    \value BrickLink.UpdateStatus.Ok            The last picture load (or download) was successful.
+    \value BrickLink.UpdateStatus.Loading       BrickStore is currently loading the picture from the local cache.
+    \value BrickLink.UpdateStatus.Updating      BrickStore is currently downloading the picture from BrickLink.
+    \value BrickLink.UpdateStatus.UpdateFailed  The last download from BrickLink failed. isValid might still be
+                                                \c true, if there was a valid picture available before the failed
+                                                update!
+*/
+/*! \qmlproperty bool PriceGuide::isValid
+    \readonly
+    Returns whether this object currently holds valid price guide data.
+*/
+/*! \qmlmethod PriceGuide::update(bool highPriority = false)
+    Tries to re-download the price guide from the BrickLink server. If you set \a highPriority to \c
+    true the load/download request will be prepended to the work queue instead of appended.
+*/
+/*! \qmlmethod int PriceGuide::quantity(Time time, Condition condition)
+    Returns the number of items for sale (or item that have been sold) given the \a time frame and
+    \a condition. Returns \c 0 if no data is available.
+    See the PriceGuide type documentation for the possible values of the Time and
+    Condition enumerations.
+*/
+/*! \qmlmethod int PriceGuide::lots(Time time, Condition condition)
+    Returns the number of lots for sale (or lots that have been sold) given the \a time frame and
+    \a condition. Returns \c 0 if no data is available.
+    See the PriceGuide type documentation for the possible values of the Time and
+    Condition enumerations.
+*/
+/*! \qmlmethod real PriceGuide::price(Time time, Condition condition, Price price)
+    Returns the price of items for sale (or item that have been sold) given the \a time frame,
+    \a condition and \a price type. Returns \c 0 if no data is available.
+    See the PriceGuide type documentation for the possible values of the Time,
+    Condition and Price enumerations.
+*/
+
+QmlPicture *QmlPicture::create(PictureRef picture)
+{
+    auto *qmlPic = new QmlPicture(std::move(picture));
+    QQmlEngine::setObjectOwnership(qmlPic, QQmlEngine::JavaScriptOwnership);
+    return qmlPic;
+}
+
+QmlPicture::QmlPicture(PictureRef picture)
+    : m_picture(std::move(picture))
+{
+    Q_ASSERT(m_picture);
+
+    // forward the notifications, so that QML bindings on our properties work
+    connect(m_picture.get(), &Picture::isValidChanged, this, &QmlPicture::isValidChanged);
+    connect(m_picture.get(), &Picture::lastUpdatedChanged, this, &QmlPicture::lastUpdatedChanged);
+    connect(m_picture.get(), &Picture::updateStatusChanged, this, &QmlPicture::updateStatusChanged);
+    connect(m_picture.get(), &Picture::imageChanged, this, &QmlPicture::imageChanged);
+
+    // imageUrl is derived from all three of these
+    connect(m_picture.get(), &Picture::isValidChanged, this, &QmlPicture::imageUrlChanged);
+    connect(m_picture.get(), &Picture::lastUpdatedChanged, this, &QmlPicture::imageUrlChanged);
+    connect(m_picture.get(), &Picture::imageChanged, this, &QmlPicture::imageUrlChanged);
+}
+
+const Item *QmlPicture::item() const          { return m_picture->item(); }
+const Color *QmlPicture::color() const        { return m_picture->color(); }
+bool QmlPicture::isValid() const              { return m_picture->isValid(); }
+QDateTime QmlPicture::lastUpdated() const     { return m_picture->lastUpdated(); }
+UpdateStatus QmlPicture::updateStatus() const { return m_picture->updateStatus(); }
+QImage QmlPicture::image() const              { return m_picture->image(); }
+
+QUrl QmlPicture::imageUrl() const
+{
+    const auto *item = m_picture->item();  // nullptr if the picture went stale
+    const auto *color = m_picture->color();
+
+    if (!item || !m_picture->isValid() || m_picture->image().isNull())
+        return { };
+
+    return QUrl(u"image://" + imageProviderId + u"/picture/"
+                + QString::number(m_picture->lastUpdated().toMSecsSinceEpoch()) + u'/'
+                + QChar::fromLatin1(item->itemTypeId()) + u'/'
+                + QString::number(color ? color->id() : 0) + u'/'
+                + QString::fromLatin1(item->id()));
+}
+
+void QmlPicture::update(bool highPriority)
+{
+    core()->pictureCache()->updatePicture(m_picture, highPriority);
+}
+
+void QmlPicture::cancelUpdate()
+{
+    core()->pictureCache()->cancelPictureUpdate(m_picture);
+}
+
+
+QmlPriceGuide *QmlPriceGuide::create(PriceGuideRef priceGuide)
+{
+    auto *qmlPg = new QmlPriceGuide(std::move(priceGuide));
+    QQmlEngine::setObjectOwnership(qmlPg, QQmlEngine::JavaScriptOwnership);
+    return qmlPg;
+}
+
+QmlPriceGuide::QmlPriceGuide(PriceGuideRef priceGuide)
+    : m_priceGuide(std::move(priceGuide))
+{
+    Q_ASSERT(m_priceGuide);
+
+    // forward the notifications, so that QML bindings on our properties work
+    connect(m_priceGuide.get(), &PriceGuide::isValidChanged, this, &QmlPriceGuide::isValidChanged);
+    connect(m_priceGuide.get(), &PriceGuide::lastUpdatedChanged, this, &QmlPriceGuide::lastUpdatedChanged);
+    connect(m_priceGuide.get(), &PriceGuide::updateStatusChanged, this, &QmlPriceGuide::updateStatusChanged);
+}
+
+const Item *QmlPriceGuide::item() const          { return m_priceGuide->item(); }
+const Color *QmlPriceGuide::color() const        { return m_priceGuide->color(); }
+VatType QmlPriceGuide::vatType() const           { return m_priceGuide->vatType(); }
+bool QmlPriceGuide::isValid() const              { return m_priceGuide->isValid(); }
+QDateTime QmlPriceGuide::lastUpdated() const     { return m_priceGuide->lastUpdated(); }
+UpdateStatus QmlPriceGuide::updateStatus() const { return m_priceGuide->updateStatus(); }
+
+int QmlPriceGuide::quantity(Time t, Condition c) const  { return m_priceGuide->quantity(t, c); }
+int QmlPriceGuide::lots(Time t, Condition c) const      { return m_priceGuide->lots(t, c); }
+double QmlPriceGuide::price(Time t, Condition c, Price p) const { return m_priceGuide->price(t, c, p); }
+
+void QmlPriceGuide::update(bool highPriority)
+{
+    core()->priceGuideCache()->updatePriceGuide(m_priceGuide, highPriority);
+}
+
+void QmlPriceGuide::cancelUpdate()
+{
+    core()->priceGuideCache()->cancelPriceGuideUpdate(m_priceGuide);
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+/*! \qmlsignal BrickLink::priceGuideUpdated(PriceGuide priceGuide)
+    This signal is emitted every time the state of the \a priceGuide object changes. Receiving this
+    signal doesn't mean the price guide data is available: you have to check the object's
+    properties to see what has changed.
+    \note Each emission hands out a new PriceGuide object for the same price guide, so compare its
+          item and color instead of comparing object identity. Binding to a PriceGuide's own
+          properties is usually simpler than using this signal.
+*/
+/*! \qmlmethod PriceGuide BrickLink::priceGuide(Item item, Color color, VatType vatType, bool highPriority = false)
+    Creates a PriceGuide object that asynchronously loads (or downloads) the price guide data for
+    the given \a item, \a color and \a vatType combination. If you set \a highPriority to \c true, the
+    load/download request will be prepended to the work queue instead of appended.
+    You need to connect to the signal BrickLink::priceGuideUpdated() to know when the data has
+    been loaded.
+    \note Hold on to the returned object for as long as you need the price guide: it is what keeps
+          the data in BrickStore's cache.
+    \sa PriceGuide
+*/
+QmlPriceGuide *QmlBrickLink::priceGuide(QmlItem item, QmlColor color, VatType vatType, bool highPriority)
+{
+    auto pg = core()->priceGuideCache()->priceGuide(item.wrappedObject(), color.wrappedObject(),
+                                                    vatType, highPriority);
+    return pg ? QmlPriceGuide::create(std::move(pg)) : nullptr;
+}
+
+/*! \qmlmethod PriceGuide BrickLink::priceGuide(Item item, Color color, bool highPriority = false)
+    Creates a PriceGuide object that asynchronously loads (or downloads) the price guide data for
+    the given \a item, \a color and currentVatType combination. If you set \a highPriority to
+    \c true, the load/download request will be prepended to the work queue instead of appended.
+    You need to connect to the signal BrickLink::priceGuideUpdated() to know when the data has
+    been loaded.
+    \sa PriceGuide
+*/
+QmlPriceGuide *QmlBrickLink::priceGuide(QmlItem item, QmlColor color, bool highPriority)
+{
+    return priceGuide(item, color, currentVatType(), highPriority);
+}
+
+
+/*! \qmlsignal BrickLink::pictureUpdated(Picture picture)
+    This signal is emitted every time the state of the \a picture object changes. Receiving this
+    signal doesn't mean the picture is available: you have to check the object's properties
+    to see what has changed.
+    \note Each emission hands out a new Picture object for the same picture, so compare its item
+          and color instead of comparing object identity. Binding to a Picture's own properties is
+          usually simpler than using this signal.
+*/
+/*! \qmlmethod Picture BrickLink::picture(Item item, Color color, bool highPriority = false)
+    Creates a \l Picture object that asynchronously loads (or downloads) the picture for the given
+    \a item and \a color combination. If you set \a highPriority to \c true the load/download
+    request will be prepended to the work queue instead of appended.
+    You need to connect to the signal BrickLink::pictureUpdated() to know when the data has
+    been loaded.
+    \note Hold on to the returned object for as long as you need the picture: it is what keeps the
+          image in BrickStore's cache.
+    \sa Picture
+*/
+QmlPicture *QmlBrickLink::picture(QmlItem item, QmlColor color, bool highPriority)
+{
+    auto pic = core()->pictureCache()->picture(item.wrappedObject(), color.wrappedObject(), highPriority);
+    return pic ? QmlPicture::create(std::move(pic)) : nullptr;
+}
+
+/*! \qmlmethod Lot BrickLink::lot(var lot)
+    Create a JavaScript Lot wrapper for a C++ \c{BrickLink::Lot *} \a lot obtained from a data model.
+*/
+QmlLot QmlBrickLink::lot(const QVariant &v) const
+{
+    if (v.userType() == qMetaTypeId<const BrickLink::Lot *>())
+        return QmlLot { const_cast<BrickLink::Lot *>(v.value<const BrickLink::Lot *>()), nullptr };
+    else
+        return v.value<BrickLink::Lot *>();
+}
+
+InventoryModel *QmlBrickLink::inventoryModel(InventoryModel::Mode mode, const QVariantList &simpleLots)
+{
+    QVector<BrickLink::InventoryModel::SimpleLot> list;
+
+    list.reserve(simpleLots.size());
+
+    for (int i = 0; i < int(simpleLots.size()); ++i) {
+        const QVariantMap &sl = simpleLots.at(i).toMap();
+        const QVariant &vitem = sl.value(u"item"_qs);
+        const QVariant &vcolor = sl.value(u"color"_qs);
+        int qty = sl.value(u"quantity"_qs).toInt();
+        const BrickLink::Item *item = nullptr;
+        const BrickLink::Color *color = nullptr;
+
+        if (vitem.userType() == qMetaTypeId<const BrickLink::Item *>())
+            item = vitem.value<const BrickLink::Item *>();
+        else if (vitem.userType() == qMetaTypeId<BrickLink::QmlItem>())
+            item = vitem.value<BrickLink::QmlItem>().wrappedObject();
+
+        if (vcolor.userType() == qMetaTypeId<const BrickLink::Color *>())
+            color = vcolor.value<const BrickLink::Color *>();
+        else if (vcolor.userType() == qMetaTypeId<BrickLink::QmlColor>())
+            color = vcolor.value<BrickLink::QmlColor>().wrappedObject();
+
+        if (item && color)
+            list.emplace_back(item, color, qty);
+    }
+
+    auto *iim = new InventoryModel(mode, list, nullptr);
+    iim->sort(0, Qt::DescendingOrder);
+    // QML owns this model: it is created fresh per call with no C++ owner, and the QML caller keeps
+    // it alive. Make that explicit so it is not "corrected" to CppOwnership.
+    // This is in contrast to priceGuide()/picture() above, which return cache-owned singletons.
+    QQmlEngine::setObjectOwnership(iim, QQmlEngine::JavaScriptOwnership);
+    return iim;
+}
+
+QString QmlBrickLink::itemHtmlDescription(QmlItem item, QmlColor color, const QColor &highlight) const
+{
+    return BrickLink::core()->itemHtmlDescription(item.wrappedObject(), color.wrappedObject(), highlight);
+}
+
+VatType QmlBrickLink::currentVatType() const
+{
+    return BrickLink::core()->priceGuideCache()->currentVatType();
+}
+
+void QmlBrickLink::setCurrentVatType(VatType vatType)
+{
+    BrickLink::core()->priceGuideCache()->setCurrentVatType(vatType);
+}
+
+QVariantList QmlBrickLink::supportedVatTypes() const
+{
+    QVariantList result;
+    const auto vatTypes = BrickLink::core()->priceGuideCache()->supportedVatTypes();
+    result.reserve(vatTypes.size());
+    std::for_each(vatTypes.cbegin(), vatTypes.cend(),
+                  [&](const auto &vatType) { result << QVariant::fromValue(vatType); });
+    return result;
+}
+
+QString QmlBrickLink::descriptionForVatType(VatType vatType) const
+{
+    return BrickLink::core()->priceGuideCache()->descriptionForVatType(vatType);
+}
+
+QString QmlBrickLink::iconForVatType(VatType vatType) const
+{
+    return BrickLink::core()->priceGuideCache()->iconForVatType(vatType).name();
+}
+
+QVariantList QmlBrickLink::knownApiQuirks() const
+{
+    QVariantList result;
+    const auto quirks = BrickLink::core()->knownApiQuirks();
+    result.reserve(quirks.size());
+    std::for_each(quirks.cbegin(), quirks.cend(),
+                  [&](const auto &apiQuirk) { result << QVariant::fromValue(apiQuirk); });
+    return result;
+}
+
+bool QmlBrickLink::isApiQuirkActive(ApiQuirk apiQuirk) const
+{
+    return BrickLink::core()->isApiQuirkActive(apiQuirk);
+}
+
+QString QmlBrickLink::apiQuirkDescription(ApiQuirk apiQuirk) const
+{
+    return BrickLink::core()->apiQuirkDescription(apiQuirk);
+}
+
+void QmlBrickLink::setApiQuirkActive(ApiQuirk apiQuirk, bool active)
+{
+    auto currentlyActive = BrickLink::core()->activeApiQuirks();
+    if (active && !currentlyActive.contains(apiQuirk))
+        currentlyActive.insert(apiQuirk);
+    else if (!active && currentlyActive.contains(apiQuirk))
+        currentlyActive.remove(apiQuirk);
+    BrickLink::core()->setActiveApiQuirks(currentlyActive);
+}
+
+char QmlBrickLink::firstCharInString(const QString &str)
+{
+    return (str.size() == 1) ? str.at(0).toLatin1() : 0;
+}
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+QmlColorModel::QmlColorModel(QObject *parent)
+    : QIdentityProxyModel(parent)
+    , m_model(new ColorModel(this))
+{
+    connect(m_model, &ColorModel::colorTypeFilterChanged,
+            this, &QmlColorModel::colorTypeFilterChanged);
+    connect(m_model, &ColorModel::popularityFilterChanged,
+            this, &QmlColorModel::popularityFilterChanged);
+    connect(m_model, &ColorModel::colorListFilterChanged,
+            this, &QmlColorModel::colorListFilterChanged);
+
+    setSourceModel(m_model);
+}
+
+QVariant QmlColorModel::data(const QModelIndex &index, int role) const
+{
+    if (role == ColorPointerRole) {
+        return QVariant::fromValue(QmlColor(QIdentityProxyModel::data(index, role).value<const Color *>()));
+    } else  {
+        return QIdentityProxyModel::data(index, role);
+    }
+}
+
+QHash<int, QByteArray> QmlColorModel::roleNames() const
+{
+    static const QHash<int, QByteArray> roles = {
+        { Qt::DisplayRole, "name" },
+        { Qt::DecorationRole, "sampleImage" },
+        { ColorPointerRole, "colorObject" },
+    };
+    return roles;
+}
+
+QModelIndex QmlColorModel::indexOfColor(QmlColor color)
+{
+    return mapFromSource(m_model->index(color.wrappedObject()));
+}
+
+void QmlColorModel::sortByName()
+{
+    m_model->sort(0, Qt::AscendingOrder);
+}
+
+void QmlColorModel::sortByHue()
+{
+    m_model->sort(0, Qt::DescendingOrder);
+}
+
+void QmlColorModel::clearFilters()
+{
+    m_model->clearFilters();
+}
+
+float QmlColorModel::popularityFilter() const
+{
+    return m_model->popularityFilter();
+}
+
+void QmlColorModel::setPopuplarityFilter(float p)
+{
+    m_model->setPopularityFilter(p);
+}
+
+ColorType QmlColorModel::colorTypeFilter() const
+{
+    return m_model->colorTypeFilter();
+}
+
+void QmlColorModel::setColorTypeFilter(ColorType ct)
+{
+    m_model->setColorTypeFilter(ct);
+}
+
+QVariantList QmlColorModel::colorListFilter() const
+{
+    const auto rawColors = m_model->colorListFilter();
+    QVariantList result;
+    result.reserve(rawColors.size());
+    for (const auto &raw : rawColors)
+        result.append(QVariant::fromValue(QmlColor(raw)));
+    return result;
+}
+
+void QmlColorModel::setColorListFilter(const QVariantList &colors)
+{
+    QVector<const Color *> rawColors;
+    for (const auto &c : colors) {
+        if (auto raw = c.value<QmlColor>().wrappedObject())
+            rawColors << raw;
+    }
+    m_model->setColorListFilter(rawColors);
+}
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+
+} // namespace BrickLink
+

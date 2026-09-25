@@ -1,0 +1,14 @@
+The flags are from the png100px folder at https://github.com/hampusborgos/country-flags with
+GB renamed to UK. From the README.md:
+
+This repository contains accurate renders of all the worlds flags in SVG and PNG format.
+
+View all of the flags here: https://hampusborgos.github.io/country-flags/
+
+We make every effort to maintain the most accurate repository of flags. That is, flags that most
+closely match what the country or territory's laws and regulations describe the flags as being.
+
+The source files were taken from Wikimedia Commons and sometimes contributed back (when the country
+legislation more accurately describes what the flag should look like). The flags are not under
+copyright protection since flags are in public domain (there may be other restrictions on how the
+flag can be used though).
