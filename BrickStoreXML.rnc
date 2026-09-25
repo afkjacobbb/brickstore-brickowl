@@ -1,0 +1,140 @@
+# This is a Relax-NG compact XML schema for BrickStoreXML (*.bsx) files
+# 
+# You can validate any bsx file with the open-source tool jing:
+#  Debian/Ubuntu package 'jing' or https://github.com/relaxng/jing-trang
+#
+# $ jing -c path/to/BrickStoreXML.rnc file.bsx
+
+# Please note: There shouldn't be a <!DOCTYPE ...> definition, as Relax-NG does not support
+#              this mechanism. See also: https://relaxng.org/jclark/design.html#section:17
+#              If, for whatever reason, you still need to write a DTD, use <!DOCTYPE BrickStoreXML>
+
+start = BrickStoreXML
+
+# the rename of the root element to BrickStockXML didn't make any sense,
+# but now we have to deal with it:
+
+BrickStoreXML = element BrickStoreXML | BrickStockXML {
+    Inventory, GuiState? 
+}
+
+# Currency is optional. The default currency is USD.
+#
+# BrickLinkChangelogId is optional, but quite helpful when automatically applying item and color
+# renames and merges (see also https://www.bricklink.com/btchglog.asp?viewHelp=Y)
+
+Inventory = element Inventory {
+    attribute Currency { xsd:string { length="3" } }?,
+    attribute BrickLinkChangelogId { xsd:integer } }?,
+    Item*
+}
+
+Item = element Item {
+    # Required elements
+    element ItemID       { xsd:string { minLength="1" } } &
+    element ItemTypeID   { xsd:string { length="1" } } &
+    element ColorID      { xsd:integer } &
+
+    element Qty          { xsd:integer }? &   # default: 0
+    element Price        { xsd:double }? &    # default: 0
+    element Status       { string "I" | string "X" | string "E" }? &
+                         # I = include, X = exclude, E = extra
+    element Condition    { string "N" | string "U" }? &
+                         # N = new, U = used
+
+    # Optional: the actual item data. Do not write these tags at all, if value equals default value
+
+    element Bulk         { xsd:integer { minInclusive="1" } }? &   # default: 1
+    element Sale         { xsd:integer }? &   # default: 0
+    element Comments     { xsd:string }? &    # default: no comment
+    element Remarks      { xsd:string }? &    # default: no remark
+    element Retain       { empty }? &         # default: no retain
+    element Reserved     { xsd:string }? &    # default: no reserve
+    element LotID        { xsd:integer }? &   # BrickLink lot ID, default: 0
+    element BrickOwlLotID { xsd:string }? &
+    element BrickOwlID { xsd:string }? &
+    element BrickOwlColorID { xsd:integer }? &
+    element BrickOwlCondition { xsd:string }? &
+
+    element TQ1          { xsd:integer }? &   # default: 0
+    element TP1          { xsd:double }? &    # default: 0
+    element TQ2          { xsd:integer }? &   # default: 0
+    element TP2          { xsd:double }? &    # default: 0
+    element TQ3          { xsd:integer }? &   # default: 0
+    element TP3          { xsd:double }? &    # default: 0
+
+    element TotalWeight  { xsd:double }? &    # default: 0 (catalog weight * quantity)
+    element Cost         { xsd:double }? &    # default: 0
+
+    element SubCondition { string "C" | string "I" | string "M" }? &  # default: no sub-condition
+                         # C = complete, I = incomplete, M = sealed/MISB
+
+    element Stockroom    { string "A" | string "B" | string "C" }? &  # default: no stockroom
+
+    # Optional: useful to track an item across catalog updates
+    element ItemName     { xsd:string }? &
+    element ItemTypeName { xsd:string }? &
+    element ColorName    { xsd:string }? &
+    element CategoryID   { xsd:integer }? &
+    element CategoryName { xsd:string }? &
+
+    # Optional: deprecated - replaced by the more versatile DifferenceBaseValues
+    element OrigQty      { xsd:integer }? &   # default: 0
+    element OrigPrice    { xsd:double }? &    # default: 0
+
+    # Optional: new elements added in BrickStore 2021.3.3
+    element MarkerText   { xsd:string }? &    # default: no marker text
+    element MarkerColor  { xsd:string }? &    # default: no marker color, format: #RRGGBB
+
+    # Difference mode base values:
+    # All attributes are optional and have a corresponding element defined above
+    element DifferenceBaseValues {
+        attribute ItemID       { xsd:string { minLength="1" } }?,
+        attribute ItemTypeID   { xsd:string { length="1" } } &
+        attribute ColorID      { xsd:integer } &
+        attribute Qty          { xsd:integer }?,
+        attribute Price        { xsd:double }?,
+        attribute Status       { string "I" | string "X" | string "E" }?,
+        attribute Condition    { string "N" | string "U" }?,
+        attribute Bulk         { xsd:integer { minInclusive="1" } }?,
+        attribute Sale         { xsd:integer }?,
+        attribute Comments     { xsd:string }?,
+        attribute Remarks      { xsd:string }?,
+        attribute Retain       { empty }?,
+        attribute Reserved     { xsd:string }?,
+        attribute LotID        { xsd:integer }?,
+        attribute BrickOwlLotID { xsd:string }?,
+        attribute BrickOwlID { xsd:string }?,
+        attribute BrickOwlColorID { xsd:integer }?,
+        attribute BrickOwlCondition { xsd:string }?,
+        attribute TQ1          { xsd:integer }?,
+        attribute TP1          { xsd:double }?,
+        attribute TQ2          { xsd:integer }?,
+        attribute TP2          { xsd:double }?,
+        attribute TQ3          { xsd:integer }?,
+        attribute TP3          { xsd:double }?,
+        attribute TotalWeight  { xsd:double }?,
+        attribute Cost         { xsd:double }?,
+        attribute SubCondition { string "C" | string "I" | string "M" }?,
+        attribute Stockroom    { string "A" | string "B" | string "C" }?,
+        attribute ItemName     { xsd:string }?,
+        attribute ItemTypeName { xsd:string }?,
+        attribute ColorName    { xsd:string }?,
+        attribute CategoryID   { xsd:integer }?,
+        attribute CategoryName { xsd:string }?
+    }?
+}
+
+# GuiState is free for any UI editor to use for non-essential data. Make sure to write a
+# matching Application/Version attribute pair, so other editors can safely ignore your data.
+
+GuiState = element GuiState {
+    attribute Application { xsd:string },
+    attribute Version     { xsd:string },
+
+    AnyXML*
+}
+
+AnyXML = element * {
+    (attribute * { text } | text | AnyXML)*
+}

@@ -1,0 +1,96 @@
+#!/bin/bash
+
+# Copyright (C) 2004-2026 Robert Griebl
+# SPDX-License-Identifier: GPL-3.0-only
+
+# set -e -x
+
+qmake_bin=""
+qmake_bin_test=("$(which qmake-qt5)" "$(which qmake)" "$QTDIR/bin/qmake")
+prefix="/usr/local"
+debug_release=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --qmake|--qmake=*)
+        qmake_bin_test=("${1:8}")
+        if [ -z "${qmake_bin_test[0]}" ]; then
+            shift
+            qmake_bin_test=("$1")
+        fi
+        ;;
+    --prefix|--prefix=*)
+        prefix="${1:9}"
+        if [ -z "$prefix" ]; then
+            shift
+            prefix="$1"
+        fi
+        ;;
+    --debug)
+        debug_release="-DCMAKE_BUILD_TYPE=Debug"
+        ;;
+    --release)
+        debug_release="-DCMAKE_BUILD_TYPE=Release"
+        ;;
+    --backend-only)
+        backend_only="-DBACKEND_ONLY=TRUE"
+        ;;
+    *)
+        echo "Usage: configure [options]"
+        echo "  --qmake=<qmake path>   (default: search in \$PATH)"
+        echo "  --prefix=<prefix>      (default: /usr/local)"
+        echo "  --release"
+        echo "  --debug"
+        echo "  --backend-only"
+        exit 1
+        ;;
+    esac
+    shift
+done
+
+for ((i=0; i<${#qmake_bin_test[@]}; i++)); do
+   tst="${qmake_bin_test[$i]}"
+   # echo "Testing: $tst"
+
+   if [ -x "$tst" ]; then
+       qmake_bin="$tst"
+       break
+   fi
+done
+
+if ! command -v cmake >/dev/null 2>&1; then
+    echo "FAIL: Could not find a cmake binary"
+    exit 2
+fi
+if ! command -v ninja >/dev/null 2>&1 ]; then
+    echo "FAIL: Could not find a ninja binary"
+    exit 2
+fi
+
+if [ ! -x "$qmake_bin" ]; then
+    echo "FAIL: Could not find a suitable qmake binary"
+    exit 2
+fi
+
+if [ $("$qmake_bin" -query QT_VERSION 2>/dev/null | cut -d. -f1) -ne 6 ]; then
+    echo "FAIL: $qmake_bin is not a Qt 6 qmake"
+    exit 3
+fi
+
+qtcmake_bin="$(dirname $qmake_bin)/qt-cmake"
+
+if [ ! -x "$qtcmake_bin" ]; then
+    echo "FAIL: Could not find a qt-cmake binary next to $qmake_bin"
+    exit 2
+fi
+
+prefix="-DCMAKE_INSTALL_PREFIX=$prefix"
+qmake="-DQT_QMAKE_EXECUTABLE=$qmake_bin"
+ninja="-DCMAKE_GENERATOR=Ninja"
+
+echo
+echo "Running $qtcmake_bin with the following options:"
+echo "  -S . -B . $prefix $ninja $debug_release $backend_only"
+echo
+
+"$qtcmake_bin" -S . -B . "$prefix" "$ninja" $debug_release $backend_only
